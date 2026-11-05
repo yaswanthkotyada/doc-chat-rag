@@ -14,6 +14,7 @@ from app.models.conversation import Conversation, Message
 from app.models.document import Document
 from app.prompts import DEFAULT_SYSTEM_PROMPT, GROUNDED_SYSTEM_PROMPT
 from app.schemas.chat import ChatRequest
+from app.services.citations import parse_and_validate_citations
 from app.services.llm import LLMConfigurationError, LLMError, LLMRateLimitError, LLMSafetyError, llm_service
 
 logger = logging.getLogger(__name__)
@@ -204,16 +205,21 @@ async def chat_endpoint(
 
             full_content = "".join(accumulated_chunks)
             if full_content:
+                # Parse and validate citations against conversation documents
+                cleaned_content, citations = parse_and_validate_citations(full_content, selected_docs)
+
                 # Save full assistant message
                 async with async_session_factory() as save_db:
                     meta_payload: Dict[str, Any] = {}
+                    if citations:
+                        meta_payload["citations"] = citations
                     if usage_collector:
                         meta_payload["usage"] = usage_collector
 
                     assistant_msg = Message(
                         conversation_id=conversation_id,
                         role="assistant",
-                        content=full_content,
+                        content=cleaned_content,
                         meta=meta_payload if meta_payload else None
                     )
                     save_db.add(assistant_msg)
@@ -224,6 +230,7 @@ async def chat_endpoint(
                 is_completed = True
                 yield format_sse("done", {
                     "message_id": assistant_msg_id,
+                    "citations": citations,
                     "usage": usage_collector or None
                 })
 

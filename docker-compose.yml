@@ -28,7 +28,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@db:5432/doc_poc}
       SYNC_DATABASE_URL: ${SYNC_DATABASE_URL:-postgresql://postgres:postgres@db:5432/doc_poc}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       HISTORY_MAX_MESSAGES: ${HISTORY_MAX_MESSAGES:-30}
       MAX_MESSAGE_CHARS: ${MAX_MESSAGE_CHARS:-4000}
       UPLOAD_DIR: ${UPLOAD_DIR:-/data/uploads}

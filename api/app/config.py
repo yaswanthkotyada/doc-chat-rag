@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/doc_poc"
     SYNC_DATABASE_URL: str = "postgresql://postgres:postgres@db:5432/doc_poc"
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
     HISTORY_MAX_MESSAGES: int = 30
     MAX_MESSAGE_CHARS: int = 4000
 
