@@ -36,3 +36,4 @@ class ConversationDetail(BaseModel):
     messages: List[MessageRead] = []
 
     model_config = ConfigDict(from_attributes=True)
+

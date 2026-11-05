@@ -52,3 +52,4 @@ async def health_check(response: Response, db: AsyncSession = Depends(get_db)):
         pgvector=pgvector_status,
         gemini_key_configured=gemini_key_configured,
     )
+

@@ -6,3 +6,4 @@ class HealthResponse(BaseModel):
     db: str
     pgvector: str
     gemini_key_configured: bool
+
