@@ -1,3 +1,4 @@
+from app.services.ingestion import ingest_document
 from app.services.llm import GeminiLLMService, llm_service
 from app.services.storage import (
     FileTooLargeError,
@@ -16,6 +17,7 @@ from app.services.storage import (
 __all__ = [
     "GeminiLLMService",
     "llm_service",
+    "ingest_document",
     "StorageError",
     "FileTooLargeError",
     "UnsupportedFileTypeError",

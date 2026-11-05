@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from typing import List
@@ -11,6 +12,7 @@ from app.db import get_db
 from app.models.conversation import Conversation
 from app.models.document import Document
 from app.schemas.document import DocumentRead
+from app.services.ingestion import ingest_document
 from app.services.storage import (
     FileTooLargeError,
     OfficeFileNotSupportedError,
@@ -123,6 +125,8 @@ async def upload_documents(
     await db.commit()
     for doc in created_docs:
         await db.refresh(doc)
+        if doc.status == "processing":
+            asyncio.create_task(ingest_document(doc.id))
 
     return created_docs
 
@@ -221,3 +225,4 @@ async def delete_document(
     # Physically delete document files from disk
     delete_document_files(document.id)
     return None
+
