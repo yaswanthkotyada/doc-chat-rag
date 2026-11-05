@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     MAX_FILES_PER_REQUEST: int = 5
     INGEST_FAKE_DELAY_SECONDS: int = 0
 
+    # Stage 4 Direct Mode settings
+    DIRECT_MAX_PAGES: int = 40
+    DIRECT_MAX_MB: int = 20
+    DIRECT_MAX_TOTAL_TOKENS: int = 300000
+    GEMINI_FILE_UPLOAD_TIMEOUT_SECONDS: int = 30
+    CSV_MAX_ROWS_DIRECT: int = 200
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

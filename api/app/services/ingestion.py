@@ -115,11 +115,44 @@ async def ingest_document(document_id: uuid.UUID) -> None:
                 document.status = "ready"
                 document.error = None
 
+            # Mode assignment (Stage 4: Direct vs RAG)
+            if document.status == "ready":
+                max_direct_bytes = settings.DIRECT_MAX_MB * 1024 * 1024
+                if document.mime_type == "application/pdf":
+                    if (
+                        document.page_count is not None
+                        and document.page_count <= settings.DIRECT_MAX_PAGES
+                        and document.size_bytes <= max_direct_bytes
+                    ):
+                        document.mode = "direct"
+                    else:
+                        document.mode = "rag"
+                elif document.mime_type.startswith("image/"):
+                    if document.size_bytes <= max_direct_bytes:
+                        document.mode = "direct"
+                    else:
+                        document.mode = "rag"
+                elif document.mime_type in ("text/plain", "text/markdown", "text/csv"):
+                    if document.size_bytes <= max_direct_bytes:
+                        document.mode = "direct"
+                    else:
+                        document.mode = "rag"
+                else:
+                    document.mode = "rag"
+            else:
+                document.mode = None
+
         except Exception as unhandled:
             logger.error("Unhandled ingestion exception for %s: %s", document_id, unhandled, exc_info=False)
             document.status = "failed"
             document.error = "An error occurred during file ingestion"
+            document.mode = None
 
         await db.commit()
-        logger.info("Finished ingestion for document %s: status=%s", document_id, document.status)
+        logger.info(
+            "Finished ingestion for document %s: status=%s, mode=%s",
+            document_id,
+            document.status,
+            document.mode,
+        )
 
