@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.routers.chat import router as chat_router
+
 app = FastAPI(title="DOC_POC API", version="0.1.0")
 
 app.add_middleware(
@@ -11,8 +13,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(chat_router)
+
 
 @app.get("/")
 async def root():
     return {"message": "DOC_POC API is running"}
-
