@@ -1,6 +1,6 @@
 import React from 'react';
 import { Conversation, HealthStatus } from '../types';
-import { MessageSquarePlus, Trash2, CheckCircle2, AlertCircle, Database, Server, Key, Cpu } from 'lucide-react';
+import { MessageSquarePlus, Trash2, Cpu } from 'lucide-react';
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -33,7 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <h1 className="font-semibold text-lg tracking-tight">DOC POC</h1>
           </div>
           <span className="text-xs bg-indigo-950 text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-800">
-            Stage 2
+            Stage 3
           </span>
         </div>
 

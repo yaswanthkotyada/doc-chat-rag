@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Conversation, HealthStatus, Message } from './types';
+import { Conversation, DocumentItem, HealthStatus, Message } from './types';
 import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import {
@@ -9,13 +9,24 @@ import {
   createConversation,
   deleteConversation,
   streamChatMessage,
+  fetchDocuments,
+  fetchDocument,
+  uploadDocuments,
+  deleteDocument,
 } from './services/api';
+
+const MAX_UPLOAD_MB = 50;
+const MAX_FILES_PER_REQUEST = 5;
+const MAX_FILES_PER_CONVERSATION = 10;
+const OFFICE_EXTENSIONS = ['.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'];
 
 export const App: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const [streamingText, setStreamingText] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -102,13 +113,56 @@ export const App: React.FC = () => {
     if (syncUrl) updateUrl(id);
 
     try {
-      const fullConv = await fetchConversation(id);
+      const [fullConv, docs] = await Promise.all([
+        fetchConversation(id),
+        fetchDocuments(id),
+      ]);
       setActiveConversation(fullConv);
       setMessages(fullConv.messages || []);
+      setDocuments(docs);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to load conversation history.');
     }
   };
+
+  // Poll non-terminal documents every ~1.5s until terminal status (ready or failed)
+  useEffect(() => {
+    const nonTerminalDocs = documents.filter(
+      (d) => (d.status === 'processing' || d.status === 'uploading') && !d.id.startsWith('temp-')
+    );
+    if (nonTerminalDocs.length === 0) return;
+
+    let isMounted = true;
+    const timer = setTimeout(async () => {
+      try {
+        const updates = await Promise.all(
+          nonTerminalDocs.map(async (doc) => {
+            try {
+              return await fetchDocument(doc.id);
+            } catch {
+              return doc;
+            }
+          })
+        );
+
+        if (!isMounted) return;
+
+        setDocuments((prev) =>
+          prev.map((d) => {
+            const found = updates.find((u) => u.id === d.id);
+            return found ? found : d;
+          })
+        );
+      } catch {
+        // Ignore polling errors
+      }
+    }, 1500);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [documents, activeId]);
 
   // Create a new chat
   const handleNewChat = async () => {
@@ -117,6 +171,7 @@ export const App: React.FC = () => {
     }
     setErrorMessage(null);
     setStreamingText('');
+    setDocuments([]);
 
     try {
       const newConv = await createConversation();
@@ -152,6 +207,7 @@ export const App: React.FC = () => {
       setConversations(remaining);
 
       if (activeId === id) {
+        setDocuments([]);
         if (remaining.length > 0) {
           await selectConversation(remaining[0].id);
         } else {
@@ -160,6 +216,103 @@ export const App: React.FC = () => {
       }
     } catch (err: any) {
       setErrorMessage('Failed to delete conversation.');
+    }
+  };
+
+  // Delete document
+  const handleDeleteDocument = async (docId: string) => {
+    try {
+      await deleteDocument(docId);
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to delete document.');
+    }
+  };
+
+  // Handle file selection from paperclip, drag-and-drop, or clipboard paste
+  const handleFilesSelected = async (files: File[]) => {
+    if (!files || files.length === 0) return;
+
+    let convId = activeId;
+    if (!convId) {
+      try {
+        const newConv = await createConversation();
+        convId = newConv.id;
+        setActiveId(newConv.id);
+        setActiveConversation(newConv as Conversation);
+        setConversations((prev) => [newConv as Conversation, ...prev]);
+        updateUrl(newConv.id);
+      } catch {
+        setErrorMessage('Failed to initiate conversation.');
+        return;
+      }
+    }
+
+    // Client-side pre-checks
+    if (files.length > MAX_FILES_PER_REQUEST) {
+      setErrorMessage(`Cannot upload more than ${MAX_FILES_PER_REQUEST} files at a time.`);
+      return;
+    }
+
+    if (documents.length + files.length > MAX_FILES_PER_CONVERSATION) {
+      setErrorMessage(
+        `Conversation cannot exceed ${MAX_FILES_PER_CONVERSATION} files (currently ${documents.length}).`
+      );
+      return;
+    }
+
+    for (const f of files) {
+      const ext = '.' + f.name.split('.').pop()?.toLowerCase();
+      if (OFFICE_EXTENSIONS.includes(ext)) {
+        setErrorMessage('Office files will be supported in a later stage');
+        return;
+      }
+      if (f.size > MAX_UPLOAD_MB * 1024 * 1024) {
+        setErrorMessage(`"${f.name}" exceeds the maximum size limit of ${MAX_UPLOAD_MB}MB.`);
+        return;
+      }
+    }
+
+    setErrorMessage(null);
+
+    // Create optimistic temporary items
+    const tempIds = files.map((_, i) => `temp-${Date.now()}-${i}`);
+    const optimisticDocs: DocumentItem[] = files.map((f, i) => ({
+      id: tempIds[i],
+      conversation_id: convId!,
+      filename: f.name,
+      mime_type: f.type || 'application/octet-stream',
+      size_bytes: f.size,
+      status: 'uploading',
+      uploadProgress: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }));
+
+    setDocuments((prev) => [...prev, ...optimisticDocs]);
+
+    try {
+      const uploaded = await uploadDocuments(convId, files, (percent) => {
+        setDocuments((prev) =>
+          prev.map((d) => (tempIds.includes(d.id) ? { ...d, uploadProgress: percent } : d))
+        );
+      });
+
+      // Replace optimistic docs with server response
+      setDocuments((prev) => {
+        const withoutTemp = prev.filter((d) => !tempIds.includes(d.id));
+        return [...withoutTemp, ...uploaded];
+      });
+    } catch (err: any) {
+      // Mark optimistic docs as failed with error
+      setDocuments((prev) =>
+        prev.map((d) =>
+          tempIds.includes(d.id)
+            ? { ...d, status: 'failed', error: err.message || 'Upload failed' }
+            : d
+        )
+      );
+      setErrorMessage(err.message || 'File upload failed.');
     }
   };
 
@@ -290,12 +443,17 @@ export const App: React.FC = () => {
       <ChatPanel
         conversation={activeConversation}
         messages={messages}
+        documents={documents}
+        isDrawerOpen={isDrawerOpen}
         streamingText={streamingText}
         isStreaming={isStreaming}
         errorMessage={errorMessage}
         onSend={handleSend}
         onStop={handleStop}
         onRetry={handleRetry}
+        onFilesSelected={handleFilesSelected}
+        onDeleteDocument={handleDeleteDocument}
+        onToggleDrawer={() => setIsDrawerOpen((prev) => !prev)}
       />
     </div>
   );

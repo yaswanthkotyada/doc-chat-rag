@@ -1,6 +1,6 @@
-import { Conversation, HealthStatus, Message } from '../types';
+import { Conversation, DocumentItem, HealthStatus } from '../types';
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
 export async function fetchHealth(): Promise<HealthStatus> {
   const res = await fetch(`${API_BASE_URL}/api/health`);
@@ -44,6 +44,89 @@ export async function deleteConversation(id: string): Promise<void> {
   }
 }
 
+// --- Document API functions (Stage 3) ---
+
+export function getDocumentFileUrl(documentId: string): string {
+  return `${API_BASE_URL}/api/documents/${documentId}/file`;
+}
+
+export async function fetchDocuments(conversationId: string): Promise<DocumentItem[]> {
+  const res = await fetch(`${API_BASE_URL}/api/conversations/${conversationId}/documents`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch conversation documents');
+  }
+  return res.json();
+}
+
+export async function fetchDocument(documentId: string): Promise<DocumentItem> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch document status');
+  }
+  return res.json();
+}
+
+export async function deleteDocument(documentId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error('Failed to delete document');
+  }
+}
+
+export function uploadDocuments(
+  conversationId: string,
+  files: File[],
+  onProgress?: (percent: number) => void
+): Promise<DocumentItem[]> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData();
+
+    for (const file of files) {
+      formData.append('files', file);
+    }
+
+    xhr.open('POST', `${API_BASE_URL}/api/conversations/${conversationId}/documents`);
+
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.round((event.loaded / event.total) * 100);
+          onProgress(percent);
+        }
+      };
+    }
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve(data);
+        } catch {
+          reject(new Error('Invalid response from server'));
+        }
+      } else {
+        try {
+          const errData = JSON.parse(xhr.responseText);
+          const msg = typeof errData.detail === 'string'
+            ? errData.detail
+            : errData.detail?.[0]?.msg || 'Upload failed';
+          reject(new Error(msg));
+        } catch {
+          reject(new Error(xhr.statusText || 'Upload failed'));
+        }
+      }
+    };
+
+    xhr.onerror = () => reject(new Error('Network error during upload'));
+    xhr.send(formData);
+  });
+}
+
+// --- Chat Streaming (Stage 2) ---
+
 export async function streamChatMessage({
   conversationId,
   message,
@@ -72,12 +155,11 @@ export async function streamChatMessage({
       try {
         const errorData = await response.json();
         if (errorData.detail) {
-          errorMsg = typeof errorData.detail === 'string' 
-            ? errorData.detail 
+          errorMsg = typeof errorData.detail === 'string'
+            ? errorData.detail
             : errorData.detail[0]?.msg || JSON.stringify(errorData.detail);
         }
       } catch {
-        // Fallback to response status text
         errorMsg = response.statusText || errorMsg;
       }
       onError(errorMsg);
@@ -144,10 +226,8 @@ export async function streamChatMessage({
     }
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      // Aborted intentionally by user clicking Stop
       return;
     }
     onError(err.message || 'Network error encountered.');
   }
 }
-
