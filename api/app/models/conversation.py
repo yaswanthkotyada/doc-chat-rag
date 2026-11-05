@@ -23,6 +23,13 @@ class Conversation(Base):
         order_by="Message.created_at.asc()"
     )
 
+    documents = relationship(
+        "Document",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="Document.created_at.asc()"
+    )
+
 
 class Message(Base):
     __tablename__ = "messages"

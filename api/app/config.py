@@ -10,6 +10,13 @@ class Settings(BaseSettings):
     HISTORY_MAX_MESSAGES: int = 30
     MAX_MESSAGE_CHARS: int = 4000
 
+    # Stage 3 Upload & Ingestion settings
+    UPLOAD_DIR: str = "/data/uploads"
+    MAX_UPLOAD_MB: int = 50
+    MAX_FILES_PER_CONVERSATION: int = 10
+    MAX_FILES_PER_REQUEST: int = 5
+    INGEST_FAKE_DELAY_SECONDS: int = 0
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -24,4 +31,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

@@ -31,10 +31,16 @@ services:
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       HISTORY_MAX_MESSAGES: ${HISTORY_MAX_MESSAGES:-30}
       MAX_MESSAGE_CHARS: ${MAX_MESSAGE_CHARS:-4000}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/data/uploads}
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      MAX_FILES_PER_CONVERSATION: ${MAX_FILES_PER_CONVERSATION:-10}
+      MAX_FILES_PER_REQUEST: ${MAX_FILES_PER_REQUEST:-5}
+      INGEST_FAKE_DELAY_SECONDS: ${INGEST_FAKE_DELAY_SECONDS:-0}
     ports:
       - "8000:8000"
     volumes:
       - ./api/app:/app/app
+      - uploads:/data/uploads
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]
       interval: 10s
@@ -70,3 +76,4 @@ services:
 
 volumes:
   postgres_data:
+  uploads:
