@@ -131,3 +131,4 @@ class GeminiLLMService:
 
 # Singleton service instance
 llm_service = GeminiLLMService()
+

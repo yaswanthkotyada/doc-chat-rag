@@ -18,3 +18,4 @@ class ChatRequest(BaseModel):
         if len(v) > settings.MAX_MESSAGE_CHARS:
             raise ValueError(f"Message exceeds maximum allowed length of {settings.MAX_MESSAGE_CHARS} characters.")
         return trimmed
+
