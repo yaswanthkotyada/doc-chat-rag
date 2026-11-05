@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, AsyncGenerator, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import async_session_factory, get_db
 from app.models.conversation import Conversation, Message
-from app.prompts import DEFAULT_SYSTEM_PROMPT
+from app.models.document import Document
+from app.prompts import DEFAULT_SYSTEM_PROMPT, GROUNDED_SYSTEM_PROMPT
 from app.schemas.chat import ChatRequest
 from app.services.llm import LLMConfigurationError, LLMError, LLMRateLimitError, LLMSafetyError, llm_service
 
@@ -58,23 +59,104 @@ async def chat_endpoint(
             detail="Conversation not found"
         )
 
-    # 2. Save user message to database
+    # 2. Resolve attached documents
+    selected_docs: List[Document] = []
+    if payload.document_ids is not None:
+        if payload.document_ids:
+            doc_stmt = (
+                select(Document)
+                .where(
+                    Document.id.in_(payload.document_ids),
+                    Document.conversation_id == conversation.id,
+                )
+            )
+            doc_result = await db.execute(doc_stmt)
+            selected_docs = list(doc_result.scalars().all())
+    else:
+        # Default: all ready documents with mode == 'direct'
+        doc_stmt = (
+            select(Document)
+            .where(
+                Document.conversation_id == conversation.id,
+                Document.status == "ready",
+                Document.mode == "direct",
+            )
+        )
+        doc_result = await db.execute(doc_stmt)
+        selected_docs = list(doc_result.scalars().all())
+
+    # Check if any selected document has mode 'rag'
+    rag_docs = [d for d in selected_docs if d.mode == "rag"]
+    if rag_docs:
+        rag_warning = "This document is too large for direct mode. Large-document support arrives in a later stage."
+
+        # Save user message first
+        user_content = payload.message.strip() or "Describe this file."
+        user_msg = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content=user_content
+        )
+        db.add(user_msg)
+        if not conversation.title:
+            conversation.title = user_content[:60].strip()
+        conversation.updated_at = func.now()
+        await db.commit()
+
+        async def rag_warning_generator() -> AsyncGenerator[str, None]:
+            yield format_sse("token", rag_warning)
+            async with async_session_factory() as save_db:
+                assistant_msg = Message(
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    content=rag_warning,
+                    meta=None
+                )
+                save_db.add(assistant_msg)
+                await save_db.commit()
+                await save_db.refresh(assistant_msg)
+                assistant_msg_id = str(assistant_msg.id)
+            yield format_sse("done", {"message_id": assistant_msg_id, "usage": None})
+
+        return StreamingResponse(
+            rag_warning_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+        )
+
+    # 3. Determine user message content (default prompt if empty and files attached)
+    trimmed_message = payload.message.strip()
+    if not trimmed_message:
+        if selected_docs:
+            user_content = "Describe this file."
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Message cannot be empty when no documents are attached."
+            )
+    else:
+        user_content = trimmed_message
+
+    # 4. Save user message to database
     user_message = Message(
         conversation_id=conversation.id,
         role="user",
-        content=payload.message
+        content=user_content
     )
     db.add(user_message)
 
-    # 3. Auto-title if this is the first exchange
+    # 5. Auto-title if this is the first exchange
     if not conversation.title:
-        # Truncate first message to ~60 chars
-        conversation.title = payload.message[:60].strip()
+        conversation.title = user_content[:60].strip()
 
     conversation.updated_at = func.now()
     await db.commit()
 
-    # 4. Fetch conversation history up to HISTORY_MAX_MESSAGES
+    # 6. Fetch conversation history up to HISTORY_MAX_MESSAGES
     hist_stmt = (
         select(Message)
         .where(Message.conversation_id == conversation.id)
@@ -83,7 +165,6 @@ async def chat_endpoint(
     hist_result = await db.execute(hist_stmt)
     all_messages = hist_result.scalars().all()
 
-    # Slice the last N messages
     recent_messages = all_messages[-settings.HISTORY_MAX_MESSAGES:]
     formatted_history: List[Dict[str, str]] = [
         {"role": m.role, "content": m.content}
@@ -92,14 +173,25 @@ async def chat_endpoint(
 
     conversation_id = conversation.id
 
+    # 7. Select appropriate system instruction and build document parts
+    if selected_docs:
+        system_instruction = GROUNDED_SYSTEM_PROMPT
+        attached_parts = await llm_service.build_document_parts(selected_docs, db)
+    else:
+        system_instruction = DEFAULT_SYSTEM_PROMPT
+        attached_parts = None
+
     async def event_generator() -> AsyncGenerator[str, None]:
         accumulated_chunks: List[str] = []
         is_completed = False
+        usage_collector: Dict[str, Any] = {}
 
         try:
             stream = llm_service.stream_chat(
-                system_instruction=DEFAULT_SYSTEM_PROMPT,
-                messages=formatted_history
+                system_instruction=system_instruction,
+                messages=formatted_history,
+                attached_parts=attached_parts,
+                usage_collector=usage_collector,
             )
 
             async for chunk in stream:
@@ -114,11 +206,15 @@ async def chat_endpoint(
             if full_content:
                 # Save full assistant message
                 async with async_session_factory() as save_db:
+                    meta_payload: Dict[str, Any] = {}
+                    if usage_collector:
+                        meta_payload["usage"] = usage_collector
+
                     assistant_msg = Message(
                         conversation_id=conversation_id,
                         role="assistant",
                         content=full_content,
-                        meta=None
+                        meta=meta_payload if meta_payload else None
                     )
                     save_db.add(assistant_msg)
                     await save_db.commit()
@@ -126,7 +222,10 @@ async def chat_endpoint(
                     assistant_msg_id = str(assistant_msg.id)
 
                 is_completed = True
-                yield format_sse("done", {"message_id": assistant_msg_id, "usage": None})
+                yield format_sse("done", {
+                    "message_id": assistant_msg_id,
+                    "usage": usage_collector or None
+                })
 
         except asyncio.CancelledError:
             logger.info("Chat stream task cancelled for conversation %s", conversation_id)
@@ -138,7 +237,6 @@ async def chat_endpoint(
             yield format_sse("error", "An error occurred while generating the response.")
         finally:
             if not is_completed and accumulated_chunks:
-                # Save partial interrupted message protected by shield against CancelledError
                 partial_content = "".join(accumulated_chunks)
                 try:
                     await asyncio.shield(_save_interrupted_message(conversation_id, partial_content))
@@ -152,8 +250,6 @@ async def chat_endpoint(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "Content-Type": "text/event-stream",
             "X-Accel-Buffering": "no",
         }
     )
-
