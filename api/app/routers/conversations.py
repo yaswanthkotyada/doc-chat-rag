@@ -7,11 +7,13 @@ from sqlalchemy.orm import selectinload
 
 from app.db import get_db
 from app.models.conversation import Conversation
+from app.models.document import Document
 from app.schemas.conversation import (
     ConversationCreate,
     ConversationDetail,
     ConversationListItem,
 )
+from app.services.storage import delete_conversation_files
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -47,7 +49,10 @@ async def get_conversation(
 ):
     stmt = (
         select(Conversation)
-        .options(selectinload(Conversation.messages))
+        .options(
+            selectinload(Conversation.messages),
+            selectinload(Conversation.documents)
+        )
         .where(Conversation.id == conversation_id)
     )
     result = await db.execute(stmt)
@@ -77,7 +82,15 @@ async def delete_conversation(
             detail="Conversation not found"
         )
 
+    # Collect document IDs to clean up disk storage
+    doc_ids_stmt = select(Document.id).where(Document.conversation_id == conversation_id)
+    doc_ids_res = await db.execute(doc_ids_stmt)
+    doc_ids = list(doc_ids_res.scalars().all())
+
     await db.delete(conversation)
     await db.commit()
+
+    # Physically delete all files on disk
+    delete_conversation_files(doc_ids)
     return None
 

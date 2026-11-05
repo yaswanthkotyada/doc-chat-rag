@@ -28,12 +28,16 @@ class ConversationListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+from app.schemas.document import DocumentRead
+
+
 class ConversationDetail(BaseModel):
     id: uuid.UUID
     title: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     messages: List[MessageRead] = []
+    documents: List[DocumentRead] = []
 
     model_config = ConfigDict(from_attributes=True)
 
