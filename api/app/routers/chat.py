@@ -29,6 +29,18 @@ def format_sse(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
+async def _save_interrupted_message(conversation_id: uuid.UUID, content: str) -> None:
+    async with async_session_factory() as save_db:
+        partial_msg = Message(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=content,
+            meta={"interrupted": True}
+        )
+        save_db.add(partial_msg)
+        await save_db.commit()
+
+
 @router.post("/chat")
 async def chat_endpoint(
     request: Request,
@@ -126,19 +138,11 @@ async def chat_endpoint(
             yield format_sse("error", "An error occurred while generating the response.")
         finally:
             if not is_completed and accumulated_chunks:
-                # Save partial interrupted message
+                # Save partial interrupted message protected by shield against CancelledError
                 partial_content = "".join(accumulated_chunks)
                 try:
-                    async with async_session_factory() as save_db:
-                        partial_msg = Message(
-                            conversation_id=conversation_id,
-                            role="assistant",
-                            content=partial_content,
-                            meta={"interrupted": True}
-                        )
-                        save_db.add(partial_msg)
-                        await save_db.commit()
-                        logger.info("Saved interrupted message for conversation %s", conversation_id)
+                    await asyncio.shield(_save_interrupted_message(conversation_id, partial_content))
+                    logger.info("Saved interrupted message for conversation %s", conversation_id)
                 except Exception as save_err:
                     logger.error("Failed to save interrupted message: %s", save_err)
 
