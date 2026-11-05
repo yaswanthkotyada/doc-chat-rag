@@ -122,3 +122,4 @@ async def ingest_document(document_id: uuid.UUID) -> None:
 
         await db.commit()
         logger.info("Finished ingestion for document %s: status=%s", document_id, document.status)
+
