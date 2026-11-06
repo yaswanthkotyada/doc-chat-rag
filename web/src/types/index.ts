@@ -1,13 +1,29 @@
+export interface CitationItem {
+  document_id: string;
+  filename: string;
+  page?: number | null;
+  marker_text: string;
+}
+
+export interface TokenUsage {
+  prompt_tokens?: number;
+  candidates_tokens?: number;
+  total_tokens?: number;
+}
+
+export interface MessageMeta {
+  interrupted?: boolean;
+  citations?: CitationItem[];
+  usage?: TokenUsage;
+  [key: string]: any;
+}
+
 export interface Message {
   id: string;
   conversation_id: string;
   role: 'user' | 'assistant';
   content: string;
-  meta?: {
-    interrupted?: boolean;
-    citations?: any[];
-    [key: string]: any;
-  } | null;
+  meta?: MessageMeta | null;
   created_at: string;
 }
 
@@ -23,10 +39,13 @@ export interface DocumentItem {
   page_count?: number | null;
   width?: number | null;
   height?: number | null;
-  mode?: string | null;
+  mode?: 'direct' | 'rag' | string | null;
   meta?: {
     lines?: number;
     characters?: number;
+    gemini_file_name?: string;
+    gemini_file_uri?: string;
+    gemini_file_expires_at?: string;
     [key: string]: any;
   };
   created_at: string;

@@ -155,3 +155,4 @@ class StreamCitationBuffer:
         remaining = self.buffer
         self.buffer = ""
         return remaining
+

@@ -14,11 +14,13 @@ interface ChatPanelProps {
   isStreaming: boolean;
   errorMessage: string | null;
   documents: DocumentItem[];
+  selectedDocumentIds: string[];
   isDrawerOpen: boolean;
   onSend: (message: string) => void;
   onStop: () => void;
   onRetry: () => void;
   onFilesSelected: (files: File[]) => void;
+  onToggleSelectDocument: (docId: string) => void;
   onDeleteDocument: (docId: string) => void;
   onToggleDrawer: () => void;
 }
@@ -30,11 +32,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   isStreaming,
   errorMessage,
   documents,
+  selectedDocumentIds,
   isDrawerOpen,
   onSend,
   onStop,
   onRetry,
   onFilesSelected,
+  onToggleSelectDocument,
   onDeleteDocument,
   onToggleDrawer,
 }) => {
@@ -188,7 +192,12 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       {streamingText ? (
                         <div className="prose-chat text-slate-800">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {streamingText}
+                            {streamingText
+                              .replace(/\[\[(?:cite:[^\]]*)?$/i, '')
+                              .replace(
+                                /\[\[cite:\s*([^\|\]]+?)(?:\s*\|\s*p\.?\s*(\d+))?\s*\]\]/gi,
+                                (_, f, p) => `[📄 ${f}${p ? ` · p.${p}` : ''}]`
+                              )}
                           </ReactMarkdown>
                         </div>
                       ) : (
@@ -235,6 +244,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
               onFilesSelected={onFilesSelected}
               onDeleteDocument={onDeleteDocument}
               documents={documents}
+              selectedDocumentIds={selectedDocumentIds}
+              onToggleSelectDocument={onToggleSelectDocument}
               isStreaming={isStreaming}
               disabled={!conversation}
             />

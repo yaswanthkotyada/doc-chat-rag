@@ -1,4 +1,4 @@
-import { Conversation, DocumentItem, HealthStatus } from '../types';
+import { Conversation, DocumentItem, HealthStatus, CitationItem, TokenUsage } from '../types';
 
 export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
@@ -130,6 +130,7 @@ export function uploadDocuments(
 export async function streamChatMessage({
   conversationId,
   message,
+  documentIds,
   onToken,
   onDone,
   onError,
@@ -137,16 +138,22 @@ export async function streamChatMessage({
 }: {
   conversationId: string;
   message: string;
+  documentIds?: string[];
   onToken: (chunk: string) => void;
-  onDone: (messageId: string) => void;
+  onDone: (messageId: string, citations?: CitationItem[], usage?: TokenUsage) => void;
   onError: (error: string) => void;
   signal?: AbortSignal;
 }): Promise<void> {
   try {
+    const bodyPayload: any = { conversation_id: conversationId, message };
+    if (documentIds !== undefined) {
+      bodyPayload.document_ids = documentIds;
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation_id: conversationId, message }),
+      body: JSON.stringify(bodyPayload),
       signal,
     });
 
@@ -208,7 +215,7 @@ export async function streamChatMessage({
         } else if (eventType === 'done') {
           try {
             const parsed = JSON.parse(dataStr);
-            onDone(parsed.message_id || '');
+            onDone(parsed.message_id || '', parsed.citations, parsed.usage);
           } catch {
             onDone('');
           }

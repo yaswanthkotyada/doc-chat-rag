@@ -9,6 +9,8 @@ interface MessageInputProps {
   onFilesSelected: (files: File[]) => void;
   onDeleteDocument: (docId: string) => void;
   documents: DocumentItem[];
+  selectedDocumentIds?: string[];
+  onToggleSelectDocument?: (docId: string) => void;
   isStreaming: boolean;
   disabled?: boolean;
 }
@@ -19,6 +21,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
   onFilesSelected,
   onDeleteDocument,
   documents,
+  selectedDocumentIds = [],
+  onToggleSelectDocument,
   isStreaming,
   disabled = false,
 }) => {
@@ -36,8 +40,12 @@ export const MessageInput: React.FC<MessageInputProps> = ({
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!text.trim() || isStreaming || disabled) return;
-    onSend(text.trim());
+    const trimmed = text.trim();
+    const hasSelectedDocs = selectedDocumentIds.length > 0;
+
+    if ((!trimmed && !hasSelectedDocs) || isStreaming || disabled) return;
+
+    onSend(trimmed);
     setText('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -81,10 +89,17 @@ export const MessageInput: React.FC<MessageInputProps> = ({
     }
   };
 
+  const canSend = text.trim().length > 0 || selectedDocumentIds.length > 0;
+
   return (
     <div className="w-full max-w-4xl mx-auto p-4">
       {/* Uploaded Documents Chips Bar */}
-      <UploadChips documents={documents} onDeleteDocument={onDeleteDocument} />
+      <UploadChips
+        documents={documents}
+        selectedDocumentIds={selectedDocumentIds}
+        onToggleSelectDocument={onToggleSelectDocument}
+        onDeleteDocument={onDeleteDocument}
+      />
 
       <div className="relative flex items-end bg-white border border-slate-300 rounded-2xl shadow-sm focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 p-2">
         {/* Hidden File Input */}
@@ -118,6 +133,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           placeholder={
             isStreaming
               ? 'Gemini is generating...'
+              : selectedDocumentIds.length > 0
+              ? 'Ask a question about the attached files, or hit Send to describe them...'
               : 'Ask a question or paste images... (Shift+Enter for newline)'
           }
           disabled={isStreaming || disabled}
@@ -139,7 +156,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({
           <button
             type="button"
             onClick={() => handleSubmit()}
-            disabled={!text.trim() || disabled}
+            disabled={!canSend || disabled}
             title="Send message"
             className="p-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl transition-colors shadow-sm ml-2 flex items-center justify-center"
           >
@@ -149,8 +166,8 @@ export const MessageInput: React.FC<MessageInputProps> = ({
       </div>
 
       <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 px-1">
-        <span>Drop files or paste images directly into chat</span>
-        <span>Powered by Gemini 2.5 Flash</span>
+        <span>Drop files, paste images, or click checkboxes to include/exclude from context</span>
+        <span>Grounded Direct Mode</span>
       </div>
     </div>
   );

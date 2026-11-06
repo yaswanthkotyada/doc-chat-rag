@@ -26,6 +26,7 @@ export const App: React.FC = () => {
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const [streamingText, setStreamingText] = useState<string>('');
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
@@ -120,6 +121,10 @@ export const App: React.FC = () => {
       setActiveConversation(fullConv);
       setMessages(fullConv.messages || []);
       setDocuments(docs);
+      // Auto-select ready direct mode documents for context
+      setSelectedDocumentIds(
+        docs.filter((d) => d.status === 'ready' && d.mode !== 'rag').map((d) => d.id)
+      );
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to load conversation history.');
     }
@@ -172,6 +177,7 @@ export const App: React.FC = () => {
     setErrorMessage(null);
     setStreamingText('');
     setDocuments([]);
+    setSelectedDocumentIds([]);
 
     try {
       const newConv = await createConversation();
@@ -224,9 +230,17 @@ export const App: React.FC = () => {
     try {
       await deleteDocument(docId);
       setDocuments((prev) => prev.filter((d) => d.id !== docId));
+      setSelectedDocumentIds((prev) => prev.filter((id) => id !== docId));
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to delete document.');
     }
+  };
+
+  // Toggle document selection for message context
+  const handleToggleSelectDocument = (docId: string) => {
+    setSelectedDocumentIds((prev) =>
+      prev.includes(docId) ? prev.filter((id) => id !== docId) : [...prev, docId]
+    );
   };
 
   // Handle file selection from paperclip, drag-and-drop, or clipboard paste
@@ -303,6 +317,10 @@ export const App: React.FC = () => {
         const withoutTemp = prev.filter((d) => !tempIds.includes(d.id));
         return [...withoutTemp, ...uploaded];
       });
+
+      // Auto-select uploaded documents that are not failed
+      const newIds = uploaded.filter((d) => d.status !== 'failed').map((d) => d.id);
+      setSelectedDocumentIds((prev) => Array.from(new Set([...prev, ...newIds])));
     } catch (err: any) {
       // Mark optimistic docs as failed with error
       setDocuments((prev) =>
@@ -336,12 +354,15 @@ export const App: React.FC = () => {
     setErrorMessage(null);
     lastFailedMessageRef.current = text;
 
+    // Display text: default to "Describe this file." if user sent empty with files attached
+    const displayText = text.trim() || (selectedDocumentIds.length > 0 ? "Describe this file." : "");
+
     // Optimistically append user message
     const tempUserMsg: Message = {
       id: `temp-${Date.now()}`,
       conversation_id: convId,
       role: 'user',
-      content: text,
+      content: displayText,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, tempUserMsg]);
@@ -356,15 +377,20 @@ export const App: React.FC = () => {
     await streamChatMessage({
       conversationId: convId,
       message: text,
+      documentIds: selectedDocumentIds,
       signal: controller.signal,
       onToken: (chunk) => {
         accumulated += chunk;
         setStreamingText(accumulated);
       },
-      onDone: async (messageId) => {
+      onDone: async (messageId, citations, usage) => {
         setIsStreaming(false);
         abortControllerRef.current = null;
         lastFailedMessageRef.current = null;
+
+        const metaPayload: any = {};
+        if (citations && citations.length > 0) metaPayload.citations = citations;
+        if (usage) metaPayload.usage = usage;
 
         // Append assistant message
         const assistantMsg: Message = {
@@ -372,6 +398,7 @@ export const App: React.FC = () => {
           conversation_id: convId!,
           role: 'assistant',
           content: accumulated,
+          meta: Object.keys(metaPayload).length > 0 ? metaPayload : null,
           created_at: new Date().toISOString(),
         };
         setMessages((prev) => [...prev, assistantMsg]);
@@ -444,6 +471,7 @@ export const App: React.FC = () => {
         conversation={activeConversation}
         messages={messages}
         documents={documents}
+        selectedDocumentIds={selectedDocumentIds}
         isDrawerOpen={isDrawerOpen}
         streamingText={streamingText}
         isStreaming={isStreaming}
@@ -452,6 +480,7 @@ export const App: React.FC = () => {
         onStop={handleStop}
         onRetry={handleRetry}
         onFilesSelected={handleFilesSelected}
+        onToggleSelectDocument={handleToggleSelectDocument}
         onDeleteDocument={handleDeleteDocument}
         onToggleDrawer={() => setIsDrawerOpen((prev) => !prev)}
       />

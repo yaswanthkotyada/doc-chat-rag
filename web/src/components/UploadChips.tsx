@@ -1,10 +1,12 @@
 import React from 'react';
 import { DocumentItem } from '../types';
-import { FileText, Image as ImageIcon, Loader2, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { FileText, Image as ImageIcon, Loader2, CheckCircle2, AlertCircle, X, CheckSquare, Square } from 'lucide-react';
 import { getDocumentFileUrl } from '../services/api';
 
 interface UploadChipsProps {
   documents: DocumentItem[];
+  selectedDocumentIds?: string[];
+  onToggleSelectDocument?: (docId: string) => void;
   onDeleteDocument: (docId: string) => void;
 }
 
@@ -16,28 +18,68 @@ export function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-export const UploadChips: React.FC<UploadChipsProps> = ({ documents, onDeleteDocument }) => {
+export const UploadChips: React.FC<UploadChipsProps> = ({
+  documents,
+  selectedDocumentIds = [],
+  onToggleSelectDocument,
+  onDeleteDocument,
+}) => {
   if (documents.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-2 px-2 pb-2">
+    <div className="flex flex-wrap items-center gap-2 px-2 pb-2">
+      <span className="text-[11px] font-medium text-slate-400 mr-1">Context:</span>
       {documents.map((doc) => {
         const isImage = doc.mime_type.startsWith('image/');
         const isPdf = doc.mime_type === 'application/pdf';
+        const isSelected = selectedDocumentIds.includes(doc.id);
+        const isReady = doc.status === 'ready';
 
         return (
           <div
             key={doc.id}
-            className={`group flex items-center space-x-2 px-3 py-1.5 rounded-xl border text-xs shadow-2xs transition-all ${
+            onClick={() => {
+              if (isReady && onToggleSelectDocument) {
+                onToggleSelectDocument(doc.id);
+              }
+            }}
+            className={`group flex items-center space-x-2 px-2.5 py-1.5 rounded-xl border text-xs shadow-2xs transition-all select-none ${
               doc.status === 'failed'
                 ? 'bg-rose-50/80 border-rose-200 text-rose-800'
-                : doc.status === 'ready'
-                ? 'bg-slate-50 border-slate-200 text-slate-700'
+                : !isSelected && isReady
+                ? 'bg-slate-50/60 border-slate-200 text-slate-400 opacity-60 hover:opacity-100 cursor-pointer'
+                : isSelected && isReady
+                ? 'bg-indigo-50 border-indigo-300 text-indigo-950 font-medium ring-1 ring-indigo-200 cursor-pointer'
                 : 'bg-indigo-50/70 border-indigo-200 text-indigo-900'
             }`}
+            title={
+              isReady
+                ? isSelected
+                  ? 'Attached to next message. Click to exclude.'
+                  : 'Excluded from next message. Click to attach.'
+                : doc.error || 'Uploading...'
+            }
           >
+            {/* Selection Checkbox (for ready documents) */}
+            {isReady && onToggleSelectDocument && (
+              <button
+                type="button"
+                className="text-indigo-600 focus:outline-none -mr-0.5"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleSelectDocument(doc.id);
+                }}
+              >
+                {isSelected ? (
+                  <CheckSquare className="w-3.5 h-3.5 text-indigo-600 fill-indigo-50" />
+                ) : (
+                  <Square className="w-3.5 h-3.5 text-slate-400" />
+                )}
+              </button>
+            )}
+
             {/* Thumbnail or Icon */}
-            {isImage && doc.status === 'ready' ? (
+            {isImage && isReady ? (
               <img
                 src={getDocumentFileUrl(doc.id)}
                 alt={doc.filename}
@@ -52,13 +94,23 @@ export const UploadChips: React.FC<UploadChipsProps> = ({ documents, onDeleteDoc
             )}
 
             {/* Filename and Size */}
-            <div className="flex flex-col min-w-0 max-w-[130px]">
+            <div className="flex flex-col min-w-0 max-w-[125px]">
               <span className="truncate font-medium" title={doc.filename}>
                 {doc.filename}
               </span>
-              <span className="text-[10px] text-slate-400">
-                {doc.size_bytes > 0 ? formatBytes(doc.size_bytes) : ''}
-              </span>
+              <div className="flex items-center space-x-1 text-[10px] text-slate-400">
+                <span>{doc.size_bytes > 0 ? formatBytes(doc.size_bytes) : ''}</span>
+                {doc.mode === 'direct' && (
+                  <span className="bg-emerald-100 text-emerald-700 px-1 py-0.2 rounded font-semibold text-[9px]">
+                    Direct
+                  </span>
+                )}
+                {doc.mode === 'rag' && (
+                  <span className="bg-amber-100 text-amber-700 px-1 py-0.2 rounded font-semibold text-[9px]">
+                    RAG
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Status Indicator */}
@@ -100,7 +152,10 @@ export const UploadChips: React.FC<UploadChipsProps> = ({ documents, onDeleteDoc
             {/* Remove / Delete Button */}
             <button
               type="button"
-              onClick={() => onDeleteDocument(doc.id)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteDocument(doc.id);
+              }}
               className="text-slate-400 hover:text-slate-600 p-0.5 rounded transition-colors ml-1"
               title="Remove document"
             >
@@ -112,3 +167,4 @@ export const UploadChips: React.FC<UploadChipsProps> = ({ documents, onDeleteDoc
     </div>
   );
 };
+

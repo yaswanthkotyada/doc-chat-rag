@@ -117,12 +117,22 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
                         {doc.meta?.lines && <span>• {doc.meta.lines} lines</span>}
                       </div>
 
-                      {/* Status */}
-                      <div className="mt-1 flex items-center space-x-1 text-[11px]">
+                      {/* Status & Mode */}
+                      <div className="mt-1 flex items-center space-x-1.5 text-[11px]">
                         {doc.status === 'ready' && (
                           <span className="flex items-center text-emerald-600 space-x-1">
                             <CheckCircle2 className="w-3 h-3" />
                             <span>Ready</span>
+                          </span>
+                        )}
+                        {doc.mode === 'direct' && (
+                          <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.2 rounded font-semibold text-[10px]">
+                            Direct
+                          </span>
+                        )}
+                        {doc.mode === 'rag' && (
+                          <span className="bg-amber-100 text-amber-700 px-1.5 py-0.2 rounded font-semibold text-[10px]" title="File exceeds direct mode limits; reserved for RAG stage">
+                            RAG (Large)
                           </span>
                         )}
                         {doc.status === 'processing' && (
@@ -182,3 +192,4 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
     </aside>
   );
 };
+
