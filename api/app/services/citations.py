@@ -82,19 +82,25 @@ def parse_and_validate_citations(
         # 2. Validate page number
         page_val: Optional[int] = None
         if raw_page is not None:
-            try:
-                parsed_page = int(raw_page)
-                if doc_page_count is not None and parsed_page > doc_page_count:
-                    # Page exceeds page count: keep file, drop page
-                    logger.warning(
-                        "Citation page %d exceeds page_count %d for %s; dropping page number",
-                        parsed_page, doc_page_count, doc_filename
-                    )
-                    page_val = None
-                else:
-                    page_val = parsed_page
-            except ValueError:
+            if doc_page_count is None:
+                # Non-paged documents (text, markdown, csv, images) must not have page numbers
                 page_val = None
+            else:
+                try:
+                    parsed_page = int(raw_page)
+                    if parsed_page > doc_page_count:
+                        # Page exceeds page count: keep file, drop page
+                        logger.warning(
+                            "Citation page %d exceeds page_count %d for %s; dropping page number",
+                            parsed_page, doc_page_count, doc_filename
+                        )
+                        page_val = None
+                    elif parsed_page < 1:
+                        page_val = None
+                    else:
+                        page_val = parsed_page
+                except ValueError:
+                    page_val = None
 
         # 3. Construct normalized marker
         if page_val is not None:

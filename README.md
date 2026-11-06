@@ -137,6 +137,59 @@ FastAPI's asynchronous lifespan handler runs `run_startup_recovery()` upon conta
 
 ---
 
+## Stage 4: DIRECT Mode (Grounded Multimodal Document Chat)
+
+In **Stage 4**, uploaded files and images are sent directly to Gemini with the user's question, producing streamed answers grounded in file content with verifiable page-level citation chips (`[filename.pdf · p.X]`).
+
+### Which Documents Go Direct
+
+Upon upload and inspection, each document is assigned an execution `mode`:
+- **`mode = 'direct'`**: Images, plain text, Markdown, CSV, and small PDFs within limits ($\le 40$ pages and $\le 20$ MB).
+- **`mode = 'rag'`**: Larger PDFs ($> 40$ pages or $> 20$ MB). These documents remain ready for the upcoming RAG pipeline. If selected in chat, the assistant immediately streams an informative warning:
+  > *"This document is too large for direct mode. Large-document support arrives in a later stage."*
+
+### Sending Files to Gemini
+
+- **Images**: Sent inline as raw byte parts (`types.Part.from_bytes`) for immediate low-latency visual understanding.
+- **PDFs**: Uploaded to the **Gemini Files API** via `client.aio.files.upload` and polled until `ACTIVE`. File references and expiration timestamps (48-hour default retention) are cached in `documents.meta`:
+  - `gemini_file_name`: Gemini internal file resource name.
+  - `gemini_file_uri`: Gemini file URI.
+  - `gemini_file_expires_at`: ISO timestamp of file expiration.
+  - *Automatic Refresh*: Before each chat turn, if the file reference is expired or missing, it is re-uploaded transparently from local disk storage. Internal Gemini URIs and API keys are never exposed to the client or logged.
+- **Text / Markdown / CSV**: Sent as labeled text parts (`Document: filename (N lines)`). CSV files exceeding `CSV_MAX_ROWS_DIRECT` are truncated with explicit notifications to both the model and user.
+
+### Token Cost Implications & Context Management
+
+> [!IMPORTANT]
+> **Token-Cost Architecture**: Gemini models have no stateful memory of file uploads between requests. Therefore, when documents are selected, their file parts are attached to **every chat turn** that includes them.
+>
+> Prior turns in the conversation history remain **text-only**. To prevent unexpected costs and token exhaustion:
+> 1. Users can toggle which documents are attached to the next message using the inclusion chips in the input bar.
+> 2. Requests are protected by `DIRECT_MAX_TOTAL_TOKENS` (default 300,000 tokens). If an exchange exceeds this budget, it fails gracefully with an error naming the documents to deselect.
+> 3. Token usage (`prompt_tokens`, `candidates_tokens`, `total_tokens`) is recorded on every turn and displayed under assistant messages.
+
+### Grounded Prompt & Citation System
+
+Answers are strictly grounded using a specialized system instruction (`GROUNDED_SYSTEM_PROMPT`):
+- Factual claims drawn from documents are cited using machine-parseable markers:
+  - Multi-page PDFs: `[[cite: contract.pdf | p.3]]`
+  - Images and text files: `[[cite: architecture.png]]`
+- The model is instructed to refuse to guess if text is blurry or unreadable, and to explicitly state when answers are not present in the files.
+- The backend citation parser validates all markers against attached documents: unknown files are discarded, out-of-range page numbers are stripped, and duplicate filenames are disambiguated. Cleaned citations are saved in `messages.meta.citations` and sent in the SSE `done` event.
+- The web UI dynamically hides raw citation syntax during and after streaming, rendering interactive chips that open the original PDF at `#page=N` or display images in a lightbox modal.
+
+### Configuration Variables (`.env`)
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `DIRECT_MAX_PAGES` | `40` | Maximum page count for PDF direct mode eligibility. |
+| `DIRECT_MAX_MB` | `20` | Maximum file size (MB) for direct mode. |
+| `DIRECT_MAX_TOTAL_TOKENS` | `300000` | Token budget threshold for direct mode chat turns. |
+| `GEMINI_FILE_UPLOAD_TIMEOUT_SECONDS` | `30` | Timeout for Gemini Files API upload and ACTIVE state polling. |
+| `CSV_MAX_ROWS_DIRECT` | `200` | Maximum rows sent for CSV files before truncation. |
+
+---
+
 ## Planned Architecture Stages
 
 1. **Stage 1: Foundation** *(Completed)*
@@ -154,9 +207,15 @@ FastAPI's asynchronous lifespan handler runs `run_startup_recovery()` upon conta
    - Background ingestion with page counting (`pypdf`), dimension extraction (`Pillow`), and line counts.
    - Automatic container reboot recovery for interrupted uploads.
    - Frontend UX: drag-and-drop, paperclip picker, clipboard paste, real-time progress chips, and documents drawer.
-4. **Stage 4: Embeddings & Vector Storage**
-5. **Stage 5: Hybrid Retrieval & RAG Pipeline**
-6. **Stage 6: Grounded Generation & Citations**
+4. **Stage 4: DIRECT Mode (Grounded Multimodal Document Chat)** *(Completed)*
+   - Direct multimodal QA with Gemini vision and PDF understanding.
+   - Gemini Files API caching, polling, and transparent auto-reupload on expiration.
+   - Grounded prompt with machine-parseable citation markers (`[[cite: file \| p.X]]`).
+   - Pure-function citation parser with validation, out-of-bounds page dropping, and duplicate disambiguation.
+   - Interactive UI citation chips with PDF `#page=N` deep-linking and image lightbox modal.
+   - Document attachment selection toggles, "Direct"/"RAG" mode badges, and per-message token usage.
+5. **Stage 5: Embeddings & Vector Storage**
+6. **Stage 6: Hybrid Retrieval & RAG Pipeline**
 7. **Stage 7: Evaluation & Observability**
 8. **Stage 8: Production Polish & Security**
 

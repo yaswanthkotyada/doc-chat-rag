@@ -36,9 +36,12 @@ class LLMSafetyError(LLMError):
 
 
 def _sanitize_message(message: str) -> str:
-    """Ensure the API key is never leaked in error messages or logs."""
+    """Ensure the API key and internal file URIs are never leaked in error messages or logs."""
+    import re
     if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY in message:
-        return message.replace(settings.GEMINI_API_KEY, "[REDACTED]")
+        message = message.replace(settings.GEMINI_API_KEY, "[REDACTED]")
+    # Redact internal Gemini files URI if present
+    message = re.sub(r"https://generativelanguage\.googleapis\.com[^\s\'\"]+", "[REDACTED_URI]", message)
     return message
 
 
@@ -223,12 +226,14 @@ class GeminiLLMService:
         system_instruction: str,
         messages: List[Dict[str, str]],
         attached_parts: Optional[List[types.Part]] = None,
+        attached_doc_names: Optional[List[str]] = None,
         usage_collector: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Stream text response from Gemini given conversation history and optional attached document parts.
         - `attached_parts` are attached strictly to the latest user message.
+        - `attached_doc_names` are document filenames used for clear error messages.
         - `usage_collector` is a dict populated with token usage statistics upon completion.
         """
         model_name = model or self.default_model
@@ -267,8 +272,9 @@ class GeminiLLMService:
         # Check total token budget if direct mode limit is set
         total_tokens = await self.count_tokens(contents=contents, model=model_name)
         if total_tokens > settings.DIRECT_MAX_TOTAL_TOKENS:
+            doc_str = f" with attached documents ({', '.join(attached_doc_names)})" if attached_doc_names else ""
             raise LLMError(
-                f"Combined request exceeds token limit ({total_tokens:,} tokens > {settings.DIRECT_MAX_TOTAL_TOKENS:,} max). "
+                f"Combined request{doc_str} exceeds token limit ({total_tokens:,} tokens > {settings.DIRECT_MAX_TOTAL_TOKENS:,} max). "
                 "Please deselect one or more documents."
             )
 

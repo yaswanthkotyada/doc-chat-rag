@@ -192,6 +192,7 @@ async def chat_endpoint(
                 system_instruction=system_instruction,
                 messages=formatted_history,
                 attached_parts=attached_parts,
+                attached_doc_names=[d.filename for d in selected_docs] if selected_docs else None,
                 usage_collector=usage_collector,
             )
 
