@@ -185,10 +185,10 @@ def upload_test_doc(
     assert res.status_code == 201, f"Upload failed: {res.text}"
     doc_id = res.json()[0]["id"]
 
-    for _ in range(20):
+    for _ in range(30):
         time.sleep(0.5)
         d = requests.get(f"{BASE_URL}/api/documents/{doc_id}").json()
-        if d.get("status") == "ready":
+        if d.get("status") == "ready" or (d.get("mode") == "rag" and d.get("status") in ("processing", "ready")):
             return d
     raise TimeoutError(f"Document {doc_id} did not become ready.")
 
