@@ -21,5 +21,15 @@ class DocumentRead(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # Parsing metadata (Stage 5)
+    parse_status: Optional[str] = None
+    parse_error: Optional[str] = None
+    parser_name: Optional[str] = None
+    parser_version: Optional[str] = None
+    parse_started_at: Optional[datetime] = None
+    parse_finished_at: Optional[datetime] = None
+    pages_parsed: Optional[int] = 0
+    parse_options: Optional[Dict[str, Any]] = None
+
     model_config = ConfigDict(from_attributes=True)
 

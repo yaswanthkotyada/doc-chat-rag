@@ -3,40 +3,56 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.db import async_session_factory
-from app.models.document import Document
+from app.models.document import Document, DocumentPage
 from app.routers.chat import router as chat_router
 from app.routers.conversations import router as conversations_router
 from app.routers.documents import router as documents_router
 from app.routers.health import router as health_router
-from app.services.ingestion import ingest_document
+from app.services.ingestion import ingest_document, parse_document_task
 from app.services.storage import get_document_file_path
 
 logger = logging.getLogger(__name__)
 
 
 async def run_startup_recovery():
-    """Recover documents left in uploading or processing state during a restart."""
+    """Recover documents left in uploading or processing/parsing state during a restart."""
     logger.info("Checking for unfinished document ingestions across server restarts...")
     try:
         async with async_session_factory() as db:
-            stmt = select(Document).where(Document.status.in_(["uploading", "processing"]))
+            stmt = select(Document).where(
+                (Document.status.in_(["uploading", "processing"]))
+                | (Document.parse_status.in_(["parsing", "pending"]))
+            )
             result = await db.execute(stmt)
             stuck_docs = result.scalars().all()
 
             for doc in stuck_docs:
                 file_path = get_document_file_path(doc.id, doc.mime_type)
-                if file_path.exists():
+                if not file_path.exists():
+                    logger.warning("Failing document %s: file missing on disk after restart", doc.id)
+                    doc.status = "failed"
+                    doc.error = "Upload interrupted by server restart"
+                    doc.parse_status = "failed"
+                    doc.parse_error = "Upload interrupted by server restart"
+                    continue
+
+                # If document was in the middle of parsing or pending parse
+                if doc.parse_status in ("parsing", "pending"):
+                    logger.info("Recovering document %s: clearing partial parse pages and re-queueing parse", doc.id)
+                    await db.execute(delete(DocumentPage).where(DocumentPage.document_id == doc.id))
+                    doc.parse_status = "pending"
+                    doc.parse_error = None
+                    if doc.mode == "rag":
+                        doc.status = "processing"
+                    asyncio.create_task(parse_document_task(doc.id))
+                else:
                     logger.info("Recovering document %s: file exists on disk, re-running ingestion", doc.id)
                     doc.status = "processing"
                     doc.error = None
                     asyncio.create_task(ingest_document(doc.id))
-                else:
-                    logger.warning("Failing document %s: file missing on disk after restart", doc.id)
-                    doc.status = "failed"
-                    doc.error = "Upload interrupted by server restart"
 
             await db.commit()
     except Exception as e:

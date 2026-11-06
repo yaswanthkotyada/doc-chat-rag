@@ -53,6 +53,7 @@ services:
       - "8000:8000"
     volumes:
       - ./api/app:/app/app
+      - ./api/alembic:/app/alembic
       - uploads:/data/uploads
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]

@@ -4,7 +4,7 @@ import re
 import shutil
 import uuid
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import filetype
 from fastapi import UploadFile
 
@@ -124,6 +124,46 @@ def get_document_file_path(document_id: uuid.UUID, mime_type: str) -> Path:
     elif mime_type == "text/markdown":
         ext = ".md"
     return doc_dir / f"original{ext}"
+
+
+def get_document_parsed_dir(document_id: uuid.UUID) -> Path:
+    """Get the directory where parsed artifacts (docling.json, full.md) are stored."""
+    return get_document_dir(document_id) / "parsed"
+
+
+def get_document_parsed_json_path(document_id: uuid.UUID) -> Path:
+    """Path to raw docling JSON output."""
+    return get_document_parsed_dir(document_id) / "docling.json"
+
+
+def get_document_parsed_md_path(document_id: uuid.UUID) -> Path:
+    """Path to full assembled markdown file."""
+    return get_document_parsed_dir(document_id) / "full.md"
+
+
+def save_parsed_artifacts(
+    document_id: uuid.UUID,
+    raw_json: Optional[dict],
+    full_markdown: Optional[str],
+) -> Tuple[Optional[Path], Optional[Path]]:
+    """Save raw JSON and markdown artifacts to disk under /data/uploads/{id}/parsed/."""
+    import json
+    parsed_dir = get_document_parsed_dir(document_id)
+    parsed_dir.mkdir(parents=True, exist_ok=True)
+
+    json_path = None
+    if raw_json is not None:
+        json_path = get_document_parsed_json_path(document_id)
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(raw_json, f, ensure_ascii=False, indent=2)
+
+    md_path = None
+    if full_markdown is not None:
+        md_path = get_document_parsed_md_path(document_id)
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(full_markdown)
+
+    return json_path, md_path
 
 
 async def save_upload_stream(

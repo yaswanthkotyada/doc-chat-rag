@@ -58,3 +58,4 @@ class DocumentParser(ABC):
             ParsedDocument containing per-page markdown and metadata.
         """
         pass
+

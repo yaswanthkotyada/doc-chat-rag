@@ -1,30 +1,235 @@
 import asyncio
+from datetime import datetime, timezone
 import logging
 import uuid
 from typing import Optional
 from PIL import Image, UnidentifiedImageError
 from pypdf import PdfReader
 from pypdf.errors import PyPdfError
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from app.config import settings
 from app.db import async_session_factory
-from app.models.document import Document
-from app.services.storage import get_document_file_path
+from app.models.document import Document, DocumentPage
+from app.services.parsers import (
+    DoclingClientParser,
+    DocumentParserError,
+    ParsedDocument,
+    ParserUnavailableError,
+)
+from app.services.storage import (
+    get_document_file_path,
+    save_parsed_artifacts,
+)
 
 logger = logging.getLogger(__name__)
+
+# Semaphore to bound concurrent parsing tasks
+_parse_semaphore = asyncio.Semaphore(settings.PARSE_CONCURRENCY)
+
+
+def should_parse_document(mime_type: str, mode: Optional[str]) -> bool:
+    """Check if document qualifies for parsing based on PARSE_MODE and file type."""
+    if settings.PARSE_MODE == "off":
+        return False
+    if mime_type != "application/pdf":
+        return False
+    if settings.PARSE_MODE == "rag_only":
+        return mode == "rag"
+    if settings.PARSE_MODE == "all_pdfs":
+        return True
+    return False
+
+
+async def parse_document_task(document_id: uuid.UUID) -> None:
+    """
+    Background worker that parses a document with Docling.
+    Throttled by PARSE_CONCURRENCY semaphore.
+    Idempotent: clears partial/previous pages before storing new ones.
+    """
+    logger.info("Queued parse task for document %s (waiting for parser slot)...", document_id)
+
+    async with _parse_semaphore:
+        logger.info("Starting parse task execution for document %s", document_id)
+        now = datetime.now(timezone.utc)
+
+        # 1. Initialize parsing state in DB
+        async with async_session_factory() as db:
+            stmt = select(Document).where(Document.id == document_id)
+            result = await db.execute(stmt)
+            document = result.scalar_one_or_none()
+
+            if not document:
+                logger.warning("Parse aborted: document %s not found in DB", document_id)
+                return
+
+            file_path = get_document_file_path(document.id, document.mime_type)
+            if not file_path.exists():
+                document.parse_status = "failed"
+                document.parse_error = "Document file missing on disk"
+                if document.mode == "rag":
+                    document.status = "failed"
+                    document.error = "Document file missing on disk"
+                await db.commit()
+                return
+
+            # Clear any previously stored pages for this document (idempotent retry)
+            await db.execute(delete(DocumentPage).where(DocumentPage.document_id == document_id))
+
+            document.parse_status = "parsing"
+            document.parse_error = None
+            document.parse_started_at = now
+            document.parse_finished_at = None
+            document.pages_parsed = 0
+            if document.mode == "rag":
+                document.status = "processing"
+
+            await db.commit()
+
+        # 2. Execute parsing with Docling
+        parser = DoclingClientParser(base_url=settings.DOCLING_URL)
+
+        def on_batch_progress(pages_done: int, total_pages: int):
+            async def _update_progress():
+                try:
+                    async with async_session_factory() as prog_db:
+                        await prog_db.execute(
+                            update(Document)
+                            .where(Document.id == document_id)
+                            .values(pages_parsed=pages_done)
+                        )
+                        await prog_db.commit()
+                except Exception as pe:
+                    logger.warning("Failed to record parse progress for %s: %s", document_id, pe)
+
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_update_progress())
+            except Exception as e:
+                logger.warning("Could not schedule progress update: %s", e)
+
+        try:
+            parsed_doc: ParsedDocument = await parser.parse(
+                file_path=file_path,
+                options={
+                    "batch_pages": settings.PARSE_BATCH_PAGES,
+                    "do_ocr": settings.PARSE_OCR_ENABLED,
+                    "timeout_seconds": settings.PARSE_TIMEOUT_SECONDS,
+                    "min_chars_per_page": settings.PARSE_MIN_CHARS_PER_PAGE,
+                    "on_progress": on_batch_progress,
+                },
+            )
+
+            # 3. Save raw JSON and full markdown artifacts to disk
+            save_parsed_artifacts(
+                document_id=document_id,
+                raw_json=parsed_doc.raw_json,
+                full_markdown=parsed_doc.full_markdown,
+            )
+
+            # 4. Save per-page records and update document state in DB
+            finished_at = datetime.now(timezone.utc)
+            async with async_session_factory() as db:
+                stmt = select(Document).where(Document.id == document_id)
+                result = await db.execute(stmt)
+                document = result.scalar_one_or_none()
+                if not document:
+                    return
+
+                # Insert page records
+                for page in parsed_doc.pages:
+                    db_page = DocumentPage(
+                        document_id=document.id,
+                        page_no=page.page_no,
+                        markdown=page.markdown,
+                        plain_text=page.plain_text,
+                        char_count=page.char_count,
+                        has_table=page.has_table,
+                        has_figure=page.has_figure,
+                        ocr_used=page.ocr_used,
+                        warnings=page.warnings,
+                    )
+                    db.add(db_page)
+
+                document.parse_status = "parsed"
+                document.parse_error = None
+                document.parser_name = parsed_doc.parser_name
+                document.parser_version = parsed_doc.parser_version
+                document.pages_parsed = parsed_doc.page_count
+                document.parse_finished_at = finished_at
+                document.parse_options = {
+                    "batch_pages": settings.PARSE_BATCH_PAGES,
+                    "do_ocr": settings.PARSE_OCR_ENABLED,
+                }
+
+                # Update page_count if not set previously
+                if not document.page_count:
+                    document.page_count = parsed_doc.page_count
+
+                # RAG documents become 'ready' only after parsing completes
+                if document.mode == "rag":
+                    document.status = "ready"
+                    document.error = None
+
+                await db.commit()
+
+            logger.info(
+                "Document %s parsed successfully: %d pages stored",
+                document_id,
+                parsed_doc.page_count,
+            )
+
+        except ParserUnavailableError as pue:
+            logger.warning("Docling service unavailable during parsing for %s: %s", document_id, pue)
+            safe_error = "Parsing service unavailable"
+            async with async_session_factory() as db:
+                stmt = select(Document).where(Document.id == document_id)
+                result = await db.execute(stmt)
+                doc = result.scalar_one_or_none()
+                if doc:
+                    doc.parse_status = "failed"
+                    doc.parse_error = safe_error
+                    doc.parse_finished_at = datetime.now(timezone.utc)
+                    if doc.mode == "rag":
+                        doc.status = "failed"
+                        doc.error = safe_error
+                    await db.commit()
+
+        except Exception as err:
+            logger.error("Document parsing failed for %s: %s", document_id, err, exc_info=False)
+            err_str = str(err).lower()
+            if "timed out" in err_str:
+                safe_error = "Parsing request timed out"
+            else:
+                safe_error = f"Document parsing failed: {err}"[:200]
+
+            async with async_session_factory() as db:
+                stmt = select(Document).where(Document.id == document_id)
+                result = await db.execute(stmt)
+                doc = result.scalar_one_or_none()
+                if doc:
+                    doc.parse_status = "failed"
+                    doc.parse_error = safe_error
+                    doc.parse_finished_at = datetime.now(timezone.utc)
+                    if doc.mode == "rag":
+                        doc.status = "failed"
+                        doc.error = safe_error
+                    await db.commit()
 
 
 async def ingest_document(document_id: uuid.UUID) -> None:
     """
     Background ingestion task: inspects document file on disk, extracts
-    metadata (page_count, width/height, lines/characters), and marks status ready or failed.
+    metadata (page_count, width/height, lines/characters), assigns mode,
+    and dispatches parsing if qualified.
     """
     logger.info("Starting ingestion for document: %s", document_id)
 
     # Optional artificial delay for observing status transitions
     if settings.INGEST_FAKE_DELAY_SECONDS > 0:
         await asyncio.sleep(settings.INGEST_FAKE_DELAY_SECONDS)
+
+    enqueue_parse = False
 
     async with async_session_factory() as db:
         stmt = select(Document).where(Document.id == document_id)
@@ -39,6 +244,7 @@ async def ingest_document(document_id: uuid.UUID) -> None:
         if not file_path.exists():
             document.status = "failed"
             document.error = "Stored file is missing from server disk"
+            document.parse_status = "skipped"
             await db.commit()
             return
 
@@ -61,10 +267,10 @@ async def ingest_document(document_id: uuid.UUID) -> None:
                             document.page_count = page_count
                             document.status = "ready"
                             document.error = None
-                except PyPdfError as pdf_err:
+                except PyPdfError:
                     document.status = "failed"
                     document.error = "Corrupted or invalid PDF file"
-                except Exception as e:
+                except Exception:
                     document.status = "failed"
                     document.error = "Failed to process PDF document"
 
@@ -73,7 +279,6 @@ async def ingest_document(document_id: uuid.UUID) -> None:
                 try:
                     with Image.open(str(file_path)) as img:
                         width, height = img.size
-                        # Verify integrity
                         img.verify()
 
                     document.width = width
@@ -115,7 +320,7 @@ async def ingest_document(document_id: uuid.UUID) -> None:
                 document.status = "ready"
                 document.error = None
 
-            # Mode assignment (Stage 4: Direct vs RAG)
+            # 4. Mode assignment (Stage 4: Direct vs RAG)
             if document.status == "ready":
                 max_direct_bytes = settings.DIRECT_MAX_MB * 1024 * 1024
                 if document.mime_type == "application/pdf":
@@ -142,17 +347,35 @@ async def ingest_document(document_id: uuid.UUID) -> None:
             else:
                 document.mode = None
 
+            # 5. Parsing qualification (Stage 5)
+            if document.status == "ready":
+                if should_parse_document(document.mime_type, document.mode):
+                    document.parse_status = "pending"
+                    enqueue_parse = True
+                    # RAG mode documents remain in 'processing' status until parse finishes
+                    if document.mode == "rag":
+                        document.status = "processing"
+                else:
+                    document.parse_status = "skipped"
+            else:
+                document.parse_status = "skipped"
+
         except Exception as unhandled:
             logger.error("Unhandled ingestion exception for %s: %s", document_id, unhandled, exc_info=False)
             document.status = "failed"
             document.error = "An error occurred during file ingestion"
             document.mode = None
+            document.parse_status = "skipped"
 
         await db.commit()
         logger.info(
-            "Finished ingestion for document %s: status=%s, mode=%s",
+            "Finished ingestion for document %s: status=%s, mode=%s, parse_status=%s",
             document_id,
             document.status,
             document.mode,
+            document.parse_status,
         )
 
+    # Launch background parse task if qualified
+    if enqueue_parse:
+        asyncio.create_task(parse_document_task(document_id))
