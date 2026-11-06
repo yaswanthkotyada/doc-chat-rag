@@ -89,7 +89,11 @@ async def chat_endpoint(
     # Check if any selected document has mode 'rag'
     rag_docs = [d for d in selected_docs if d.mode == "rag"]
     if rag_docs:
-        rag_warning = "This document is too large for direct mode. Large-document support arrives in a later stage."
+        # Stage 5: updated message if parsed and ready for indexing
+        if all(d.parse_status == "parsed" for d in rag_docs):
+            rag_warning = "Parsed and ready for indexing in the next stage."
+        else:
+            rag_warning = "This document is too large for direct mode. Large-document support arrives in a later stage."
 
         # Save user message first
         user_content = payload.message.strip() or "Describe this file."

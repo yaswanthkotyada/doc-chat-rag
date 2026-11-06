@@ -133,7 +133,12 @@ export const App: React.FC = () => {
   // Poll non-terminal documents every ~1.5s until terminal status (ready or failed)
   useEffect(() => {
     const nonTerminalDocs = documents.filter(
-      (d) => (d.status === 'processing' || d.status === 'uploading') && !d.id.startsWith('temp-')
+      (d) =>
+        (d.status === 'processing' ||
+          d.status === 'uploading' ||
+          d.parse_status === 'parsing' ||
+          d.parse_status === 'pending') &&
+        !d.id.startsWith('temp-')
     );
     if (nonTerminalDocs.length === 0) return;
 

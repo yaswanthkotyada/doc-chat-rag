@@ -61,6 +61,72 @@ export interface DocumentItem {
   created_at: string;
   updated_at: string;
   uploadProgress?: number; // client-side tracking before server response
+
+  // Stage 5: Parsing Metadata
+  parse_status?: 'pending' | 'parsing' | 'parsed' | 'failed' | 'skipped' | null;
+  parse_error?: string | null;
+  parser_name?: string | null;
+  parser_version?: string | null;
+  parse_started_at?: string | null;
+  parse_finished_at?: string | null;
+  pages_parsed?: number | null;
+  parse_options?: Record<string, any> | null;
+}
+
+export interface DocumentParseSummary {
+  total_warnings: number;
+  low_text_pages: number[];
+  garbled_pages: number[];
+  pages_with_tables: number;
+  pages_with_figures: number;
+  total_characters: number;
+}
+
+export interface DocumentParseResponse {
+  document_id: string;
+  parse_status?: 'pending' | 'parsing' | 'parsed' | 'failed' | 'skipped' | null;
+  parse_error?: string | null;
+  parser_name?: string | null;
+  parser_version?: string | null;
+  parse_started_at?: string | null;
+  parse_finished_at?: string | null;
+  duration_seconds?: number | null;
+  pages_parsed: number;
+  total_pages?: number | null;
+  parse_options?: Record<string, any> | null;
+  warnings_summary?: DocumentParseSummary | null;
+}
+
+export interface DocumentPageSummary {
+  id: string;
+  page_no: number;
+  char_count: number;
+  has_table: boolean;
+  has_figure: boolean;
+  ocr_used?: boolean | null;
+  warnings: string[];
+}
+
+export interface DocumentPagesListResponse {
+  items: DocumentPageSummary[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
+export interface DocumentPageDetail {
+  id: string;
+  document_id: string;
+  page_no: number;
+  markdown: string;
+  plain_text: string;
+  char_count: number;
+  has_table: boolean;
+  has_figure: boolean;
+  ocr_used?: boolean | null;
+  warnings: string[];
+  created_at: string;
 }
 
 export interface Conversation {

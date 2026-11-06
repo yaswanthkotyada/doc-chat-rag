@@ -1,4 +1,13 @@
-import { Conversation, DocumentItem, HealthStatus, CitationItem, TokenUsage } from '../types';
+import {
+  Conversation,
+  DocumentItem,
+  HealthStatus,
+  CitationItem,
+  TokenUsage,
+  DocumentParseResponse,
+  DocumentPagesListResponse,
+  DocumentPageDetail,
+} from '../types';
 
 export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
@@ -73,6 +82,54 @@ export async function deleteDocument(documentId: string): Promise<void> {
   if (!res.ok && res.status !== 404) {
     throw new Error('Failed to delete document');
   }
+}
+
+// --- Document Parsing API functions (Stage 5) ---
+
+export function getDocumentParsedMdUrl(documentId: string): string {
+  return `${API_BASE_URL}/api/documents/${documentId}/parsed.md`;
+}
+
+export async function fetchDocumentParse(documentId: string): Promise<DocumentParseResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}/parse`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch document parse status');
+  }
+  return res.json();
+}
+
+export async function retryDocumentParse(documentId: string): Promise<DocumentParseResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}/parse/retry`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to retry document parsing');
+  }
+  return res.json();
+}
+
+export async function fetchDocumentPages(
+  documentId: string,
+  page = 1,
+  limit = 50
+): Promise<DocumentPagesListResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}/pages?page=${page}&limit=${limit}`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch document pages');
+  }
+  return res.json();
+}
+
+export async function fetchDocumentPageDetail(
+  documentId: string,
+  pageNo: number
+): Promise<DocumentPageDetail> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}/pages/${pageNo}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch page ${pageNo} details`);
+  }
+  return res.json();
 }
 
 export function uploadDocuments(

@@ -5,6 +5,8 @@ import { Conversation, DocumentItem, Message } from '../types';
 import { MessageItem } from './MessageItem';
 import { MessageInput } from './MessageInput';
 import { DocumentsDrawer } from './DocumentsDrawer';
+import { ParsedViewModal } from './ParsedViewModal';
+import { retryDocumentParse } from '../services/api';
 import { Bot, AlertCircle, RefreshCw, MessageSquare, Files, UploadCloud } from 'lucide-react';
 
 interface ChatPanelProps {
@@ -46,7 +48,16 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [userHasScrolledUp, setUserHasScrolledUp] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [inspectDoc, setInspectDoc] = useState<DocumentItem | null>(null);
   const dragCounterRef = useRef(0);
+
+  const handleRetryParse = async (docId: string) => {
+    try {
+      await retryDocumentParse(docId);
+    } catch (err: any) {
+      console.error('Failed to retry parse:', err);
+    }
+  };
 
   // Detect whether the user has scrolled up away from bottom
   const handleScroll = () => {
@@ -258,6 +269,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           isOpen={isDrawerOpen}
           onClose={onToggleDrawer}
           onDeleteDocument={onDeleteDocument}
+          onViewParsed={setInspectDoc}
+          onRetryParse={handleRetryParse}
+        />
+
+        {/* Parsed Document Modal */}
+        <ParsedViewModal
+          document={inspectDoc}
+          isOpen={Boolean(inspectDoc)}
+          onClose={() => setInspectDoc(null)}
         />
       </div>
     </main>

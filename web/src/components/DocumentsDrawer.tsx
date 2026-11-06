@@ -12,6 +12,9 @@ import {
   Loader2,
   X,
   FileCode,
+  Eye,
+  Clock,
+  RefreshCw,
 } from 'lucide-react';
 
 interface DocumentsDrawerProps {
@@ -19,6 +22,8 @@ interface DocumentsDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onDeleteDocument: (docId: string) => void;
+  onViewParsed?: (doc: DocumentItem) => void;
+  onRetryParse?: (docId: string) => void;
 }
 
 export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
@@ -26,6 +31,8 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
   isOpen,
   onClose,
   onDeleteDocument,
+  onViewParsed,
+  onRetryParse,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -41,7 +48,7 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
   };
 
   return (
-    <aside className="w-80 border-l border-slate-200 bg-white flex flex-col h-full shadow-lg z-20 transition-all">
+    <aside className="w-84 border-l border-slate-200 bg-white flex flex-col h-full shadow-lg z-20 transition-all">
       {/* Drawer Header */}
       <div className="h-14 px-4 border-b border-slate-200 flex items-center justify-between">
         <div className="flex items-center space-x-2">
@@ -73,6 +80,12 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
             const isImage = doc.mime_type.startsWith('image/');
             const isPdf = doc.mime_type === 'application/pdf';
             const fileUrl = getDocumentFileUrl(doc.id);
+
+            const isParsing = doc.parse_status === 'parsing';
+            const isParsed = doc.parse_status === 'parsed';
+            const isParseFailed = doc.parse_status === 'failed';
+            const isParsePending = doc.parse_status === 'pending';
+            const isParseSkipped = doc.parse_status === 'skipped';
 
             return (
               <div
@@ -118,7 +131,7 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
                       </div>
 
                       {/* Status & Mode */}
-                      <div className="mt-1 flex items-center space-x-1.5 text-[11px]">
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
                         {doc.status === 'ready' && (
                           <span className="flex items-center text-emerald-600 space-x-1">
                             <CheckCircle2 className="w-3 h-3" />
@@ -135,7 +148,7 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
                             RAG (Large)
                           </span>
                         )}
-                        {doc.status === 'processing' && (
+                        {doc.status === 'processing' && !isParsing && !isParsePending && (
                           <span className="flex items-center text-amber-600 space-x-1">
                             <Loader2 className="w-3 h-3 animate-spin" />
                             <span>Processing...</span>
@@ -147,18 +160,121 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
                             <span>Uploading ({doc.uploadProgress || 0}%)...</span>
                           </span>
                         )}
-                        {doc.status === 'failed' && (
+                        {doc.status === 'failed' && !isParseFailed && (
                           <span className="flex items-center text-rose-600 space-x-1" title={doc.error || 'Failed'}>
                             <AlertCircle className="w-3 h-3 flex-shrink-0" />
                             <span className="truncate max-w-[140px]">{doc.error || 'Failed'}</span>
                           </span>
                         )}
                       </div>
+
+                      {/* Stage 5 Parsing Status Badges & Progress */}
+                      {isParsing && (
+                        <div className="mt-2 space-y-1">
+                          <div className="flex items-center justify-between text-[10px] text-indigo-700 font-medium">
+                            <span className="flex items-center space-x-1">
+                              <Loader2 className="w-3 h-3 animate-spin text-indigo-600" />
+                              <span>Parsing with Docling...</span>
+                            </span>
+                            {doc.page_count ? (
+                              <span>{doc.pages_parsed || 0}/{doc.page_count} pages</span>
+                            ) : null}
+                          </div>
+                          {doc.page_count && doc.page_count > 0 && (
+                            <div className="w-full bg-indigo-100 rounded-full h-1.5 overflow-hidden">
+                              <div
+                                className="bg-indigo-600 h-1.5 rounded-full transition-all duration-300"
+                                style={{
+                                  width: `${Math.min(100, Math.round(((doc.pages_parsed || 0) / doc.page_count) * 100))}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {isParsePending && (
+                        <div className="mt-1 flex items-center space-x-1 text-[10px] text-amber-700 font-medium">
+                          <Clock className="w-3 h-3 animate-pulse text-amber-500" />
+                          <span>Parse queued (waiting for slot)</span>
+                        </div>
+                      )}
+
+                      {isParsed && (
+                        <div className="mt-1.5 flex items-center space-x-2">
+                          <span
+                            className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800 cursor-help"
+                            title={
+                              doc.parser_name
+                                ? `${doc.parser_name} v${doc.parser_version || '1.38'}`
+                                : 'Parsed'
+                            }
+                          >
+                            <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                            <span>Parsed</span>
+                          </span>
+
+                          {onViewParsed && (
+                            <button
+                              onClick={() => onViewParsed(doc)}
+                              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition-colors shadow-2xs cursor-pointer"
+                              title="Open side-by-side parsed view"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>Parsed View</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {isParseFailed && (
+                        <div className="mt-1.5 space-y-1">
+                          <div
+                            className="flex items-center space-x-1 text-[10px] text-rose-600 font-medium truncate"
+                            title={doc.parse_error || 'Parsing failed'}
+                          >
+                            <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                            <span className="truncate">{doc.parse_error || 'Parsing failed'}</span>
+                          </div>
+                          {onRetryParse && (
+                            <button
+                              onClick={() => onRetryParse(doc.id)}
+                              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors"
+                              title="Retry parsing"
+                            >
+                              <RefreshCw className="w-2.5 h-2.5" />
+                              <span>Retry Parse</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* On-demand parse option for skipped PDF documents */}
+                      {isPdf && isParseSkipped && onRetryParse && (
+                        <div className="mt-1 flex items-center space-x-1">
+                          <button
+                            onClick={() => onRetryParse(doc.id)}
+                            className="text-[10px] text-slate-500 hover:text-indigo-600 hover:underline flex items-center space-x-1"
+                            title="Run Docling parser on this PDF"
+                          >
+                            <span>Run Docling Parse</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Actions */}
                   <div className="flex items-center space-x-1 ml-2">
+                    {isParsed && onViewParsed && (
+                      <button
+                        onClick={() => onViewParsed(doc)}
+                        className="p-1.5 text-slate-400 hover:text-indigo-600 rounded transition-colors"
+                        title="Open Parsed View"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     {doc.status === 'ready' && (
                       <a
                         href={fileUrl}
@@ -192,4 +308,3 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
     </aside>
   );
 };
-
