@@ -190,6 +190,103 @@ Answers are strictly grounded using a specialized system instruction (`GROUNDED_
 
 ---
 
+## Stage 5: Document Parsing with Docling
+
+In **Stage 5**, large PDF documents (classified as `mode = 'rag'`) are parsed using IBM's **Docling** (`docling-serve`) into per-page structured Markdown, plain text, tables, and figures. The parsed content is stored in PostgreSQL and on disk with exact 1-based page numbering, and is inspectable side-by-side against the original PDF in the UI.
+
+### Architecture & Services
+
+- **Containerized Docling Service**:
+  - Image: `ghcr.io/docling-project/docling-serve-cpu:latest` (~4.4 GB).
+  - Runs in a dedicated container `doc_poc_docling` on internal port `5001`.
+  - **Persistent Model Cache**: Named Docker volume `docling_cache:/root/.cache` prevents re-downloading Hugging Face weights and vision models across container rebuilds or system reboots.
+  - **Memory Limits & Page Batching**: Docling memory is capped via Docker Compose (`DOCLING_MEM_LIMIT=3500M`). Large PDFs are sliced into page batches (`PARSE_BATCH_PAGES=10`), bounding memory consumption to ~1.5–2 GB on CPU.
+- **Informational Health Probe**:
+  - `GET /api/health` probes Docling's `/health` endpoint. If Docling is stopped or unreachable, `/api/health` reports `docling: "unreachable"` while overall system health remains HTTP 200. Core direct-mode chat and document upload remain fully operational even if Docling is offline.
+- **First-Run Download Time & Resource Guidance**:
+  - On the very first run, Docling downloads standard layout analysis and table structure models (~500 MB). This initial download takes ~1–3 minutes depending on your internet connection.
+  - For optimal performance, allocate at least **4 to 8 GB RAM** to Docker Desktop.
+
+### Decoupled Parser Abstraction (`services/parsers/`)
+
+The core application is completely decoupled from Docling's internal schema:
+- `base.py`: Defines the `DocumentParser` protocol and dataclasses:
+  - `ParsedPage`: `page_no` (1-based), `markdown`, `plain_text`, `char_count`, `has_table`, `has_figure`, `ocr_used`, `warnings`.
+  - `ParsedDocument`: `parser_name`, `parser_version`, `page_count`, `pages`, `raw_json`, `full_markdown`.
+  - Exceptions: `DocumentParserError`, `ParserUnavailableError`.
+- `docling_client.py`: Implements `DocumentParser` using `httpx.AsyncClient` against `docling-serve` REST API (`POST /v1/convert/file`), utilizing native page break separators (`<!-- DOCLING_PAGE_BREAK -->`) and element provenance mapping.
+
+### Database Schema (Alembic Migration `004`)
+
+- **`documents` Table Extensions**:
+  - `parse_status`: `'pending' | 'parsing' | 'parsed' | 'failed' | 'skipped'` (indexed).
+  - `parse_error`: User-safe error description.
+  - `parser_name` & `parser_version`: Engine metadata (e.g. `docling`, `1.38.2`).
+  - `parse_started_at` & `parse_finished_at`: UTC timestamps.
+  - `pages_parsed`: Progress counter updated per page batch.
+  - `parse_options`: JSONB configuration options.
+- **`document_pages` Table**:
+  - `id`: UUID primary key.
+  - `document_id`: UUID ForeignKey (`documents.id`, `ON DELETE CASCADE`).
+  - `page_no`: Exact 1-based page number (indexed, unique constraint on `[document_id, page_no]`).
+  - `markdown`: Structured Markdown for the page.
+  - `plain_text`: Clean plain text for embedding extraction.
+  - `char_count`: Total character count.
+  - `has_table` (bool), `has_figure` (bool), `ocr_used` (bool).
+  - `warnings`: JSONB array of heuristic flags (`low_text`, `garbled`).
+
+### Disk Storage Layout
+
+In addition to database records, raw artifacts are persisted under `/data/uploads/{document_id}/parsed/`:
+```text
+/data/uploads/{document_id}/
+├── original.pdf            # Original uploaded document
+└── parsed/
+    ├── docling.json        # Raw structured JSON payload with bounding boxes & provenance
+    └── full.md             # Complete assembled document Markdown with page comments
+```
+Deleting a document or conversation permanently removes these files and folders via cascading deletion.
+
+### Built-in Quality Heuristics
+
+Every parsed page is automatically evaluated with cheap quality heuristics:
+- **`low_text`**: Flagged if total plain text characters < `PARSE_MIN_CHARS_PER_PAGE` (default: 50).
+- **`garbled`**: Flagged if the alphanumeric/character ratio is below 65% on non-empty pages.
+- **Page Count Consistency**: Verifies that the total parsed page count matches the pypdf reader count.
+
+### REST Endpoints Reference
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/documents/{id}/parse` | `GET` | Parse status, progress, timing, and warnings summary. |
+| `/api/documents/{id}/parse/retry` | `POST` | Reset status, clear previous pages, and re-enqueue background parsing. |
+| `/api/documents/{id}/pages` | `GET` | Paginated page list (`?page=1&limit=50`) with metadata and flags. |
+| `/api/documents/{id}/pages/{n}` | `GET` | Single-page detail with structured Markdown and plain text. |
+| `/api/documents/{id}/parsed.md` | `GET` | Download full assembled Markdown as an attachment. |
+
+### Frontend "Parsed View" & UX
+
+- **Documents Drawer**: Real-time progress bars and page counters (`pages 12/45`) during parsing, with live 1.5s reactive polling.
+- **Split-Screen Parsed View Screen**:
+  - **Left**: Original PDF rendered at `#page=N`.
+  - **Right**: Rendered Markdown with a toggle to Raw Markdown / Plain Text, table and figure badges, quality warning chips, jump-to-page navigation, and a Download `.md` button.
+- **Chat Status-Aware Messaging**: RAG documents that are parsed stream: `"Parsed and ready for indexing in the next stage."`
+
+### Configuration Variables (`.env`)
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `DOCLING_URL` | `http://docling:5001` | URL for the docling-serve container. |
+| `DOCLING_MEM_LIMIT` | `3500M` | Memory constraint on the docling container. |
+| `PARSE_MODE` | `rag_only` | `rag_only` (default), `all_pdfs` (parse direct-mode PDFs too), or `off`. |
+| `PARSE_BATCH_PAGES` | `10` | Page count per Docling batch request. |
+| `PARSE_CONCURRENCY` | `1` | Maximum simultaneous parsing jobs to bound CPU/RAM. |
+| `PARSE_TIMEOUT_SECONDS` | `300` | Per-batch timeout for Docling HTTP inference. |
+| `PARSE_OCR_ENABLED` | `false` | Enable EasyOCR engine for scanned pages (`false` speeds up born-digital PDFs). |
+| `PARSE_MIN_CHARS_PER_PAGE` | `50` | Threshold below which pages are flagged as `low_text`. |
+
+---
+
 ## Planned Architecture Stages
 
 1. **Stage 1: Foundation** *(Completed)*
@@ -214,8 +311,17 @@ Answers are strictly grounded using a specialized system instruction (`GROUNDED_
    - Pure-function citation parser with validation, out-of-bounds page dropping, and duplicate disambiguation.
    - Interactive UI citation chips with PDF `#page=N` deep-linking and image lightbox modal.
    - Document attachment selection toggles, "Direct"/"RAG" mode badges, and per-message token usage.
-5. **Stage 5: Embeddings & Vector Storage**
-6. **Stage 6: Hybrid Retrieval & RAG Pipeline**
-7. **Stage 7: Evaluation & Observability**
-8. **Stage 8: Production Polish & Security**
+5. **Stage 5: Document Parsing with Docling** *(Completed)*
+   - Containerized Docling service (`docling-serve-cpu`) with persistent model cache volume (`docling_cache`).
+   - Replaceable `DocumentParser` interface with memory-bounded page batching and progress callbacks.
+   - Alembic migration `004` adding parsing fields and `document_pages` table with exact 1-based page indices.
+   - Disk artifact storage (`parsed/docling.json` & `parsed/full.md`) with cascading cleanup.
+   - Quality heuristics (`low_text`, `garbled`, page count mismatch validation).
+   - REST API endpoints for parse status, retry, paginated pages, page detail, and markdown downloads.
+   - Interactive split-screen "Parsed view" modal comparing original PDF page against parsed Markdown.
+   - Concurrency limits, startup crash recovery, and resilience when Docling is offline.
+6. **Stage 6: Chunking, Embeddings & Vector Storage**
+7. **Stage 7: Hybrid Retrieval & RAG Pipeline**
+8. **Stage 8: Evaluation & Observability**
+9. **Stage 9: Production Polish & Security**
 

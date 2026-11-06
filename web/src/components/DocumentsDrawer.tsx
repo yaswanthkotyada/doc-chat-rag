@@ -288,11 +288,10 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
                     )}
                     <button
                       onClick={() => handleDeleteClick(doc.id)}
-                      className={`p-1.5 rounded transition-colors text-xs flex items-center space-x-1 ${
-                        confirmDeleteId === doc.id
+                      className={`p-1.5 rounded transition-colors text-xs flex items-center space-x-1 ${confirmDeleteId === doc.id
                           ? 'bg-rose-600 text-white hover:bg-rose-700 px-2'
                           : 'text-slate-400 hover:text-rose-600'
-                      }`}
+                        }`}
                       title={confirmDeleteId === doc.id ? 'Click again to confirm delete' : 'Delete document'}
                     >
                       <Trash2 className="w-3.5 h-3.5" />

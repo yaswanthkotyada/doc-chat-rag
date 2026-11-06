@@ -292,6 +292,12 @@ class DoclingClientParser(DocumentParser):
 
             curr_start = curr_end + 1
 
+        # Strict page count consistency check
+        if len(all_pages) != total_pages:
+            raise DocumentParserError(
+                f"Parser page count mismatch: pypdf detected {total_pages} pages, but parser produced {len(all_pages)} pages."
+            )
+
         # Concatenate full document markdown
         full_markdown = "\n\n".join(
             f"<!-- Page {p.page_no} -->\n{p.markdown}" for p in all_pages
