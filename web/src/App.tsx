@@ -357,12 +357,24 @@ export const App: React.FC = () => {
     // Display text: default to "Describe this file." if user sent empty with files attached
     const displayText = text.trim() || (selectedDocumentIds.length > 0 ? "Describe this file." : "");
 
-    // Optimistically append user message
+    // Resolve attached documents for this message
+    const attachedDocs = documents.filter((d) => selectedDocumentIds.includes(d.id));
+    const attachedSummary = attachedDocs.map((d) => ({
+      id: d.id,
+      filename: d.filename,
+      mime_type: d.mime_type,
+      size_bytes: d.size_bytes,
+      page_count: d.page_count,
+      mode: d.mode,
+    }));
+
+    // Optimistically append user message with attached_documents in meta
     const tempUserMsg: Message = {
       id: `temp-${Date.now()}`,
       conversation_id: convId,
       role: 'user',
       content: displayText,
+      meta: attachedSummary.length > 0 ? { attached_documents: attachedSummary } : null,
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, tempUserMsg]);

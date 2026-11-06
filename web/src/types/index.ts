@@ -11,10 +11,20 @@ export interface TokenUsage {
   total_tokens?: number;
 }
 
+export interface AttachedDocumentSummary {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes?: number;
+  page_count?: number | null;
+  mode?: string | null;
+}
+
 export interface MessageMeta {
   interrupted?: boolean;
   citations?: CitationItem[];
   usage?: TokenUsage;
+  attached_documents?: AttachedDocumentSummary[];
   [key: string]: any;
 }
 

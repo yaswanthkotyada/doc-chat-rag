@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CitationItem, Message } from '../types';
 import { getDocumentFileUrl } from '../services/api';
+import { formatBytes } from './UploadChips';
 import {
   Bot,
   User,
@@ -64,6 +65,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
   const isInterrupted = message.meta?.interrupted;
   const citations = message.meta?.citations || [];
   const usage = message.meta?.usage;
+  const attachedDocs = message.meta?.attached_documents || [];
 
   const [lightbox, setLightbox] = useState<{ url: string; title: string } | null>(null);
 
@@ -112,6 +114,63 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message }) => {
                 : 'bg-white border border-slate-200 text-slate-800 rounded-tl-none'
             }`}
           >
+            {/* Attached Documents placed above user message text */}
+            {isUser && attachedDocs.length > 0 && (
+              <div className="mb-2.5 space-y-1.5">
+                {attachedDocs.map((doc) => {
+                  const isPdf = doc.mime_type === 'application/pdf';
+                  const isImg = doc.mime_type.startsWith('image/');
+                  const fileUrl = getDocumentFileUrl(doc.id);
+
+                  return (
+                    <a
+                      key={doc.id}
+                      href={fileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => {
+                        if (isImg) {
+                          e.preventDefault();
+                          setLightbox({ url: fileUrl, title: doc.filename });
+                        }
+                      }}
+                      className="flex items-center space-x-2.5 px-3 py-2 rounded-xl bg-white/15 hover:bg-white/25 border border-white/20 text-white shadow-2xs transition-all no-underline cursor-pointer group"
+                      title={`View ${doc.filename}`}
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
+                        {isImg ? (
+                          <img
+                            src={fileUrl}
+                            alt={doc.filename}
+                            className="w-8 h-8 object-cover"
+                          />
+                        ) : isPdf ? (
+                          <FileText className="w-4 h-4 text-rose-200" />
+                        ) : (
+                          <FileCode className="w-4 h-4 text-indigo-100" />
+                        )}
+                      </div>
+                      <div className="flex flex-col min-w-0 flex-1 text-left">
+                        <span className="font-semibold text-xs truncate max-w-[220px]" title={doc.filename}>
+                          {doc.filename}
+                        </span>
+                        <div className="flex items-center space-x-2 text-[10px] text-indigo-100/80">
+                          {doc.size_bytes !== undefined && <span>{formatBytes(doc.size_bytes)}</span>}
+                          {doc.page_count ? <span>· {doc.page_count} pages</span> : null}
+                          {doc.mode && (
+                            <span className="uppercase text-[9px] px-1 py-0.2 rounded bg-white/20 font-bold tracking-wide">
+                              {doc.mode}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <ExternalLink className="w-3.5 h-3.5 text-white/60 group-hover:text-white flex-shrink-0" />
+                    </a>
+                  );
+                })}
+              </div>
+            )}
+
             {isUser ? (
               <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
             ) : (

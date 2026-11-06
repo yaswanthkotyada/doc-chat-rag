@@ -93,10 +93,25 @@ async def chat_endpoint(
 
         # Save user message first
         user_content = payload.message.strip() or "Describe this file."
+        user_meta = {
+            "attached_documents": [
+                {
+                    "id": str(d.id),
+                    "filename": d.filename,
+                    "mime_type": d.mime_type,
+                    "size_bytes": d.size_bytes,
+                    "page_count": d.page_count,
+                    "mode": d.mode,
+                }
+                for d in selected_docs
+            ]
+        } if selected_docs else None
+
         user_msg = Message(
             conversation_id=conversation.id,
             role="user",
-            content=user_content
+            content=user_content,
+            meta=user_meta
         )
         db.add(user_msg)
         if not conversation.title:
@@ -143,10 +158,27 @@ async def chat_endpoint(
         user_content = trimmed_message
 
     # 4. Save user message to database
+    user_meta = None
+    if selected_docs:
+        user_meta = {
+            "attached_documents": [
+                {
+                    "id": str(d.id),
+                    "filename": d.filename,
+                    "mime_type": d.mime_type,
+                    "size_bytes": d.size_bytes,
+                    "page_count": d.page_count,
+                    "mode": d.mode,
+                }
+                for d in selected_docs
+            ]
+        }
+
     user_message = Message(
         conversation_id=conversation.id,
         role="user",
-        content=user_content
+        content=user_content,
+        meta=user_meta
     )
     db.add(user_message)
 
