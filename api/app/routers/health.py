@@ -1,4 +1,5 @@
 import logging
+import httpx
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +41,18 @@ async def health_check(response: Response, db: AsyncSession = Depends(get_db)):
     # 3. Check Gemini API key configuration
     gemini_key_configured = bool(settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip())
 
-    # 4. Set HTTP status code (200 if db and pgvector are ok, otherwise 503)
+    # 4. Check Docling parsing service (informational: does NOT fail overall health)
+    docling_status = "unreachable"
+    if settings.DOCLING_URL:
+        try:
+            async with httpx.AsyncClient(timeout=1.5) as client:
+                docling_res = await client.get(f"{settings.DOCLING_URL.rstrip('/')}/health")
+                if docling_res.status_code == 200:
+                    docling_status = "ok"
+        except Exception:
+            docling_status = "unreachable"
+
+    # 5. Set HTTP status code (200 if db and pgvector are ok, otherwise 503)
     if db_status == "ok" and pgvector_status == "ok":
         response.status_code = status.HTTP_200_OK
     else:
@@ -51,5 +63,6 @@ async def health_check(response: Response, db: AsyncSession = Depends(get_db)):
         db=db_status,
         pgvector=pgvector_status,
         gemini_key_configured=gemini_key_configured,
+        docling=docling_status,
     )
 

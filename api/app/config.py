@@ -24,6 +24,16 @@ class Settings(BaseSettings):
     GEMINI_FILE_UPLOAD_TIMEOUT_SECONDS: int = 30
     CSV_MAX_ROWS_DIRECT: int = 200
 
+    # Stage 5 Docling Parsing settings
+    DOCLING_URL: str = "http://docling:5001"
+    DOCLING_MEM_LIMIT: str = "3500M"
+    PARSE_MODE: str = "rag_only"
+    PARSE_BATCH_PAGES: int = 10
+    PARSE_CONCURRENCY: int = 1
+    PARSE_TIMEOUT_SECONDS: int = 300
+    PARSE_OCR_ENABLED: bool = True
+    PARSE_MIN_CHARS_PER_PAGE: int = 50
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

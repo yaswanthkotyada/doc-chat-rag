@@ -41,6 +41,14 @@ services:
       DIRECT_MAX_TOTAL_TOKENS: ${DIRECT_MAX_TOTAL_TOKENS:-300000}
       GEMINI_FILE_UPLOAD_TIMEOUT_SECONDS: ${GEMINI_FILE_UPLOAD_TIMEOUT_SECONDS:-30}
       CSV_MAX_ROWS_DIRECT: ${CSV_MAX_ROWS_DIRECT:-200}
+      DOCLING_URL: ${DOCLING_URL:-http://docling:5001}
+      DOCLING_MEM_LIMIT: ${DOCLING_MEM_LIMIT:-3500M}
+      PARSE_MODE: ${PARSE_MODE:-rag_only}
+      PARSE_BATCH_PAGES: ${PARSE_BATCH_PAGES:-10}
+      PARSE_CONCURRENCY: ${PARSE_CONCURRENCY:-1}
+      PARSE_TIMEOUT_SECONDS: ${PARSE_TIMEOUT_SECONDS:-300}
+      PARSE_OCR_ENABLED: ${PARSE_OCR_ENABLED:-true}
+      PARSE_MIN_CHARS_PER_PAGE: ${PARSE_MIN_CHARS_PER_PAGE:-50}
     ports:
       - "8000:8000"
     volumes:
@@ -79,6 +87,29 @@ services:
       api:
         condition: service_healthy
 
+  docling:
+    image: ${DOCLING_IMAGE_TAG:-ghcr.io/docling-project/docling-serve-cpu:latest}
+    container_name: doc_poc_docling
+    restart: unless-stopped
+    environment:
+      - DOCLING_SERVE_ENABLE_UI=false
+      - HF_HOME=/root/.cache/huggingface
+    ports:
+      - "${DOCLING_PORT:-5001}:5001"
+    volumes:
+      - docling_cache:/root/.cache
+    deploy:
+      resources:
+        limits:
+          memory: ${DOCLING_MEM_LIMIT:-3500M}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5001/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
 volumes:
   postgres_data:
   uploads:
+  docling_cache:
