@@ -71,3 +71,4 @@ def downgrade() -> None:
     op.drop_column('documents', 'parser_name')
     op.drop_column('documents', 'parse_error')
     op.drop_column('documents', 'parse_status')
+

@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     PARSE_BATCH_PAGES: int = 10
     PARSE_CONCURRENCY: int = 1
     PARSE_TIMEOUT_SECONDS: int = 300
-    PARSE_OCR_ENABLED: bool = True
+    PARSE_OCR_ENABLED: bool = False
     PARSE_MIN_CHARS_PER_PAGE: int = 50
 
     model_config = SettingsConfigDict(
