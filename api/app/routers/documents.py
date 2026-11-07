@@ -18,6 +18,7 @@ from app.schemas.document import (
     ChunkRead,
     DocumentChunksResponse,
     DocumentIndexResponse,
+    DocumentModeOverrideRequest,
     DocumentPageDetail,
     DocumentPagesListResponse,
     DocumentPageSummary,
@@ -26,6 +27,7 @@ from app.schemas.document import (
     DocumentRead,
 )
 from app.services.ingestion import index_document_task, ingest_document, parse_document_task
+from app.services.router import check_override_eligibility
 from app.services.storage import (
     FileTooLargeError,
     OfficeFileNotSupportedError,
@@ -609,4 +611,41 @@ async def get_chunk_with_neighbours(
         prev_chunk=ChunkRead.model_validate(prev_chunk) if prev_chunk else None,
         next_chunk=ChunkRead.model_validate(next_chunk) if next_chunk else None,
     )
+
+
+@router.patch("/documents/{document_id}/mode-override", response_model=DocumentRead)
+async def update_document_mode_override(
+    document_id: uuid.UUID,
+    payload: DocumentModeOverrideRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update document mode override (force 'direct' | 'rag' | null).
+    Validates eligibility before saving:
+    - 'rag' requires document to be indexed.
+    - 'direct' requires document to be within page/size limits.
+    """
+    stmt = select(Document).where(Document.id == document_id)
+    doc = (await db.execute(stmt)).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if payload.mode_override:
+        target = payload.mode_override.lower().strip()
+        if target not in ("direct", "rag"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="mode_override must be 'direct', 'rag', or null"
+            )
+        is_valid, reason = check_override_eligibility(doc, target)
+        if not is_valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
+        doc.mode_override = target
+    else:
+        doc.mode_override = None
+
+    await db.commit()
+    await db.refresh(doc)
+    return DocumentRead.model_validate(doc)
+
 

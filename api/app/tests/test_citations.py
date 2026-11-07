@@ -109,6 +109,92 @@ class TestCitationParser(unittest.TestCase):
         self.assertEqual(reconstructed, "The total cost is $5,000 [[cite: contract_v2.1.pdf | p.3]] according to the terms.")
 
 
+class FakeRegistryItem:
+    def __init__(self, document_id, document_filename, page_start, page_end, chunk_id, chunk_index=0):
+        self.document_id = document_id
+        self.document_filename = document_filename
+        self.page_start = page_start
+        self.page_end = page_end
+        self.chunk_id = chunk_id
+        self.chunk_index = chunk_index
+
+
+class TestRAGCitationResolution(unittest.TestCase):
+    def setUp(self):
+        self.doc_id1 = uuid.uuid4()
+        self.doc_id2 = uuid.uuid4()
+        self.chunk_id1 = uuid.uuid4()
+        self.chunk_id2 = uuid.uuid4()
+        self.chunk_id3 = uuid.uuid4()
+
+        self.documents = [
+            FakeDocument(str(self.doc_id1), "manual.pdf", page_count=50),
+            FakeDocument(str(self.doc_id2), "spec.pdf", page_count=25),
+        ]
+
+        self.registry = {
+            "R1": FakeRegistryItem(self.doc_id1, "manual.pdf", page_start=5, page_end=5, chunk_id=self.chunk_id1),
+            "R2": FakeRegistryItem(self.doc_id1, "manual.pdf", page_start=12, page_end=15, chunk_id=self.chunk_id2),
+            "R3": FakeRegistryItem(self.doc_id2, "spec.pdf", page_start=20, page_end=20, chunk_id=self.chunk_id3),
+        }
+
+    def test_rag_single_page_citation(self):
+        text = "The system starts up in 10 seconds [cite: R1]."
+        cleaned, citations = parse_and_validate_citations(text, self.documents, result_registry=self.registry)
+
+        self.assertEqual(cleaned, "The system starts up in 10 seconds [[cite: manual.pdf | p.5]].")
+        self.assertEqual(len(citations), 1)
+        self.assertEqual(citations[0]["filename"], "manual.pdf")
+        self.assertEqual(citations[0]["page"], 5)
+        self.assertEqual(citations[0]["page_end"], 5)
+        self.assertEqual(citations[0]["chunk_id"], str(self.chunk_id1))
+
+    def test_rag_page_range_citation(self):
+        text = "Detailed wiring diagrams are provided [cite: R2]."
+        cleaned, citations = parse_and_validate_citations(text, self.documents, result_registry=self.registry)
+
+        self.assertEqual(cleaned, "Detailed wiring diagrams are provided [[cite: manual.pdf | p.12-15]].")
+        self.assertEqual(len(citations), 1)
+        self.assertEqual(citations[0]["page"], 12)
+        self.assertEqual(citations[0]["page_end"], 15)
+        self.assertEqual(citations[0]["chunk_id"], str(self.chunk_id2))
+
+    def test_rag_multiple_comma_separated_ids(self):
+        text = "Both manuals specify redundant power supplies [cite: R1, R3]."
+        cleaned, citations = parse_and_validate_citations(text, self.documents, result_registry=self.registry)
+
+        self.assertIn("[[cite: manual.pdf | p.5]]", cleaned)
+        self.assertIn("[[cite: spec.pdf | p.20]]", cleaned)
+        self.assertEqual(len(citations), 2)
+
+    def test_rag_double_brackets_supported(self):
+        text = "Operational temperature is -20C to +60C [[cite: R1]]."
+        cleaned, citations = parse_and_validate_citations(text, self.documents, result_registry=self.registry)
+
+        self.assertEqual(cleaned, "Operational temperature is -20C to +60C [[cite: manual.pdf | p.5]].")
+        self.assertEqual(len(citations), 1)
+
+    def test_rag_unknown_or_invented_id_dropped(self):
+        text = "Unverified claim from an invented chunk [cite: R99]."
+        cleaned, citations = parse_and_validate_citations(text, self.documents, result_registry=self.registry)
+
+        self.assertEqual(cleaned, "Unverified claim from an invented chunk.")
+        self.assertEqual(len(citations), 0)
+
+    def test_mixed_mode_citations(self):
+        direct_doc = FakeDocument("66666666-6666-6666-6666-666666666666", "direct_note.pdf", page_count=10)
+        docs = self.documents + [direct_doc]
+
+        text = "Direct claim [[cite: direct_note.pdf | p.3]] combined with RAG claim [cite: R3]."
+        cleaned, citations = parse_and_validate_citations(text, docs, result_registry=self.registry)
+
+        self.assertIn("[[cite: direct_note.pdf | p.3]]", cleaned)
+        self.assertIn("[[cite: spec.pdf | p.20]]", cleaned)
+        self.assertEqual(len(citations), 2)
+        filenames = {c["filename"] for c in citations}
+        self.assertEqual(filenames, {"direct_note.pdf", "spec.pdf"})
+
+
 if __name__ == "__main__":
     unittest.main()
 

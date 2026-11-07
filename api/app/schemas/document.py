@@ -37,7 +37,14 @@ class DocumentRead(BaseModel):
     chunks_count: Optional[int] = 0
     indexed_at: Optional[datetime] = None
 
+    # Routing mode override (Stage 7)
+    mode_override: Optional[str] = None
+
     model_config = ConfigDict(from_attributes=True)
+
+
+class DocumentModeOverrideRequest(BaseModel):
+    mode_override: Optional[str] = None  # 'direct' | 'rag' | None
 
 
 class DocumentParseSummary(BaseModel):
