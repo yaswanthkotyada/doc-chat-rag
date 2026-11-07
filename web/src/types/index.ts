@@ -2,7 +2,54 @@ export interface CitationItem {
   document_id: string;
   filename: string;
   page?: number | null;
+  page_end?: number | null;
+  chunk_id?: string | null;
   marker_text: string;
+}
+
+export interface AgentStepTrace {
+  step: number;
+  tool: string;
+  arguments: Record<string, any>;
+  result_count: number;
+  pages: number[];
+  chunk_ids: string[];
+  duration_ms: number;
+}
+
+export interface RoutingPlan {
+  mode: string;
+  summary: string;
+  direct_documents: Array<{
+    id: string;
+    filename: string;
+    mime_type: string;
+    page_count?: number | null;
+    size_bytes: number;
+    mode_override?: string | null;
+  }>;
+  rag_documents: Array<{
+    id: string;
+    filename: string;
+    chunks_count: number;
+    page_count?: number | null;
+    mode_override?: string | null;
+  }>;
+  excluded_documents: Array<{
+    id: string;
+    filename: string;
+    reason: string;
+  }>;
+}
+
+export interface LiveAgentStep {
+  step: number;
+  tool: string;
+  query?: string;
+  result_count?: number;
+  pages?: number[];
+  duration_ms?: number;
+  isSearching?: boolean;
 }
 
 export interface TokenUsage {
@@ -25,6 +72,11 @@ export interface MessageMeta {
   citations?: CitationItem[];
   usage?: TokenUsage;
   attached_documents?: AttachedDocumentSummary[];
+  agent_trace?: AgentStepTrace[];
+  routing_plan?: RoutingPlan;
+  limit_hit?: boolean;
+  total_steps?: number;
+  total_tool_calls?: number;
   [key: string]: any;
 }
 
@@ -50,6 +102,7 @@ export interface DocumentItem {
   width?: number | null;
   height?: number | null;
   mode?: 'direct' | 'rag' | string | null;
+  mode_override?: 'direct' | 'rag' | null;
   meta?: {
     lines?: number;
     characters?: number;

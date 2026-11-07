@@ -11,6 +11,8 @@ import {
   ChunkDetailResponse,
   DocumentIndexResponse,
   SearchDebugResponse,
+  AgentStepTrace,
+  RoutingPlan,
 } from '../types';
 
 export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
@@ -193,6 +195,9 @@ export async function streamChatMessage({
   message,
   documentIds,
   onToken,
+  onPlan,
+  onToolCall,
+  onToolResult,
   onDone,
   onError,
   signal,
@@ -201,7 +206,17 @@ export async function streamChatMessage({
   message: string;
   documentIds?: string[];
   onToken: (chunk: string) => void;
-  onDone: (messageId: string, citations?: CitationItem[], usage?: TokenUsage) => void;
+  onPlan?: (plan: RoutingPlan) => void;
+  onToolCall?: (data: { step: number; tool: string; arguments: any }) => void;
+  onToolResult?: (data: { step: number; tool: string; result_count: number; pages: number[]; duration_ms: number }) => void;
+  onDone: (
+    messageId: string,
+    citations?: CitationItem[],
+    usage?: TokenUsage,
+    agentTrace?: AgentStepTrace[],
+    routingPlan?: RoutingPlan,
+    limitHit?: boolean
+  ) => void;
   onError: (error: string) => void;
   signal?: AbortSignal;
 }): Promise<void> {
@@ -266,7 +281,28 @@ export async function streamChatMessage({
           }
         }
 
-        if (eventType === 'token') {
+        if (eventType === 'plan') {
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (onPlan) onPlan(parsed);
+          } catch {
+            // Ignore parse errors
+          }
+        } else if (eventType === 'tool_call') {
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (onToolCall) onToolCall(parsed);
+          } catch {
+            // Ignore parse errors
+          }
+        } else if (eventType === 'tool_result') {
+          try {
+            const parsed = JSON.parse(dataStr);
+            if (onToolResult) onToolResult(parsed);
+          } catch {
+            // Ignore parse errors
+          }
+        } else if (eventType === 'token') {
           try {
             const parsed = JSON.parse(dataStr);
             onToken(parsed.text !== undefined ? parsed.text : dataStr);
@@ -276,7 +312,14 @@ export async function streamChatMessage({
         } else if (eventType === 'done') {
           try {
             const parsed = JSON.parse(dataStr);
-            onDone(parsed.message_id || '', parsed.citations, parsed.usage);
+            onDone(
+              parsed.message_id || '',
+              parsed.citations,
+              parsed.usage,
+              parsed.agent_trace,
+              parsed.routing_plan,
+              parsed.limit_hit
+            );
           } catch {
             onDone('');
           }
@@ -333,6 +376,22 @@ export async function fetchChunkDetail(chunkId: string): Promise<ChunkDetailResp
   const res = await fetch(`${API_BASE_URL}/api/chunks/${chunkId}`);
   if (!res.ok) {
     throw new Error('Failed to fetch chunk details');
+  }
+  return res.json();
+}
+
+export async function updateDocumentModeOverride(
+  documentId: string,
+  modeOverride: 'direct' | 'rag' | null
+): Promise<DocumentItem> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}/mode-override`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode_override: modeOverride }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Failed to update document mode override');
   }
   return res.json();
 }

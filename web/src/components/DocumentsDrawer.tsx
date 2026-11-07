@@ -16,6 +16,7 @@ import {
   Clock,
   RefreshCw,
   Layers,
+  ArrowLeftRight,
 } from 'lucide-react';
 
 interface DocumentsDrawerProps {
@@ -27,6 +28,7 @@ interface DocumentsDrawerProps {
   onRetryParse?: (docId: string) => void;
   onViewChunks?: (doc: DocumentItem) => void;
   onRetryIndex?: (docId: string) => void;
+  onUpdateModeOverride?: (docId: string, override: 'direct' | 'rag' | null) => Promise<void>;
 }
 
 export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
@@ -38,6 +40,7 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
   onRetryParse,
   onViewChunks,
   onRetryIndex,
+  onUpdateModeOverride,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -143,22 +146,77 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
                             <span>Ready</span>
                           </span>
                         )}
-                        {doc.mode === 'direct' && (
-                          <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.2 rounded font-semibold text-[10px]">
-                            Direct
-                          </span>
-                        )}
-                        {doc.mode === 'rag' && (
+
+                        {/* Effective Mode Badge */}
+                        {doc.mode_override ? (
                           <span
-                            className="bg-amber-100 text-amber-700 px-1.5 py-0.2 rounded font-semibold text-[10px]"
+                            className={`px-1.5 py-0.2 rounded font-semibold text-[10px] ${
+                              doc.mode_override === 'rag'
+                                ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                                : 'bg-blue-100 text-blue-800 border border-blue-200'
+                            }`}
+                            title={`Mode manually forced to ${doc.mode_override.toUpperCase()}`}
+                          >
+                            {doc.mode_override.toUpperCase()} (Override)
+                          </span>
+                        ) : doc.mode === 'rag' ? (
+                          <span
+                            className="bg-purple-100 text-purple-700 px-1.5 py-0.2 rounded font-semibold text-[10px]"
                             title={
                               doc.index_status === 'indexed'
-                                ? 'Indexed and searchable in Search debug; answering arrives in the next stage'
-                                : 'File exceeds direct mode limits; reserved for RAG stage'
+                                ? 'Indexed and searchable in RAG chat'
+                                : 'Large document; will be searched via RAG once indexed'
                             }
                           >
                             {doc.index_status === 'indexed' ? 'RAG (Indexed)' : 'RAG (Large)'}
                           </span>
+                        ) : (
+                          <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.2 rounded font-semibold text-[10px]">
+                            Direct
+                          </span>
+                        )}
+
+                        {/* Mode Override Controls */}
+                        {onUpdateModeOverride && (
+                          <>
+                            {doc.mode_override ? (
+                              <button
+                                onClick={() => onUpdateModeOverride(doc.id, null)}
+                                className="text-[10px] text-slate-500 hover:text-indigo-600 hover:underline flex items-center space-x-0.5 cursor-pointer ml-1"
+                                title="Reset mode to default automatic assignment"
+                              >
+                                <ArrowLeftRight className="w-2.5 h-2.5" />
+                                <span>Reset Auto</span>
+                              </button>
+                            ) : doc.mode === 'direct' && doc.index_status === 'indexed' ? (
+                              <button
+                                onClick={() => onUpdateModeOverride(doc.id, 'rag')}
+                                className="text-[10px] text-purple-600 hover:text-purple-800 hover:underline flex items-center space-x-0.5 cursor-pointer ml-1"
+                                title="Force this document to use RAG tool search"
+                              >
+                                <ArrowLeftRight className="w-2.5 h-2.5" />
+                                <span>Force RAG</span>
+                              </button>
+                            ) : doc.mode === 'rag' ? (
+                              (doc.page_count == null || doc.page_count <= 40) && doc.size_bytes <= 20 * 1024 * 1024 ? (
+                                <button
+                                  onClick={() => onUpdateModeOverride(doc.id, 'direct')}
+                                  className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline flex items-center space-x-0.5 cursor-pointer ml-1"
+                                  title="Force this document to use Direct mode (attached as file part)"
+                                >
+                                  <ArrowLeftRight className="w-2.5 h-2.5" />
+                                  <span>Force Direct</span>
+                                </button>
+                              ) : (
+                                <span
+                                  className="text-[9px] text-slate-400 cursor-not-allowed ml-1"
+                                  title="Cannot override to Direct: exceeds 40 pages or 20MB limit"
+                                >
+                                  (Direct N/A)
+                                </span>
+                              )
+                            ) : null}
+                          </>
                         )}
                         {doc.status === 'processing' && !isParsing && !isParsePending && (
                           <span className="flex items-center text-amber-600 space-x-1">

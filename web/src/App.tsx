@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Conversation, DocumentItem, HealthStatus, Message } from './types';
+import { Conversation, DocumentItem, HealthStatus, Message, LiveAgentStep, RoutingPlan } from './types';
 import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import {
@@ -13,6 +13,7 @@ import {
   fetchDocument,
   uploadDocuments,
   deleteDocument,
+  updateDocumentModeOverride,
 } from './services/api';
 
 const MAX_UPLOAD_MB = 50;
@@ -33,6 +34,8 @@ export const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [healthLoading, setHealthLoading] = useState<boolean>(false);
+  const [liveSteps, setLiveSteps] = useState<LiveAgentStep[]>([]);
+  const [activePlan, setActivePlan] = useState<RoutingPlan | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const lastFailedMessageRef = useRef<string | null>(null);
@@ -137,7 +140,9 @@ export const App: React.FC = () => {
         (d.status === 'processing' ||
           d.status === 'uploading' ||
           d.parse_status === 'parsing' ||
-          d.parse_status === 'pending') &&
+          d.parse_status === 'pending' ||
+          d.index_status === 'indexing' ||
+          d.index_status === 'pending') &&
         !d.id.startsWith('temp-')
     );
     if (nonTerminalDocs.length === 0) return;
@@ -238,6 +243,16 @@ export const App: React.FC = () => {
       setSelectedDocumentIds((prev) => prev.filter((id) => id !== docId));
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to delete document.');
+    }
+  };
+
+  // Update document mode override (Direct vs RAG)
+  const handleUpdateModeOverride = async (docId: string, override: 'direct' | 'rag' | null) => {
+    try {
+      const updated = await updateDocumentModeOverride(docId, override);
+      setDocuments((prev) => prev.map((d) => (d.id === docId ? updated : d)));
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to update document mode override.');
     }
   };
 
@@ -385,6 +400,7 @@ export const App: React.FC = () => {
     setMessages((prev) => [...prev, tempUserMsg]);
     setIsStreaming(true);
     setStreamingText('');
+    setLiveSteps([]);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -396,18 +412,51 @@ export const App: React.FC = () => {
       message: text,
       documentIds: selectedDocumentIds,
       signal: controller.signal,
+      onPlan: (plan) => {
+        setActivePlan(plan);
+      },
+      onToolCall: (data) => {
+        setLiveSteps((prev) => [
+          ...prev,
+          {
+            step: data.step,
+            tool: data.tool,
+            query: data.arguments?.query,
+            isSearching: true,
+          },
+        ]);
+      },
+      onToolResult: (data) => {
+        setLiveSteps((prev) =>
+          prev.map((s) =>
+            s.step === data.step && s.tool === data.tool
+              ? {
+                  ...s,
+                  result_count: data.result_count,
+                  pages: data.pages,
+                  duration_ms: data.duration_ms,
+                  isSearching: false,
+                }
+              : s
+          )
+        );
+      },
       onToken: (chunk) => {
         accumulated += chunk;
         setStreamingText(accumulated);
       },
-      onDone: async (messageId, citations, usage) => {
+      onDone: async (messageId, citations, usage, agentTrace, routingPlan, limitHit) => {
         setIsStreaming(false);
+        setLiveSteps([]);
         abortControllerRef.current = null;
         lastFailedMessageRef.current = null;
 
         const metaPayload: any = {};
         if (citations && citations.length > 0) metaPayload.citations = citations;
         if (usage) metaPayload.usage = usage;
+        if (agentTrace && agentTrace.length > 0) metaPayload.agent_trace = agentTrace;
+        if (routingPlan) metaPayload.routing_plan = routingPlan;
+        if (limitHit !== undefined) metaPayload.limit_hit = limitHit;
 
         // Append assistant message
         const assistantMsg: Message = {
@@ -435,6 +484,7 @@ export const App: React.FC = () => {
       },
       onError: (err) => {
         setIsStreaming(false);
+        setLiveSteps([]);
         abortControllerRef.current = null;
         setErrorMessage(err);
       },
@@ -492,6 +542,8 @@ export const App: React.FC = () => {
         isDrawerOpen={isDrawerOpen}
         streamingText={streamingText}
         isStreaming={isStreaming}
+        liveSteps={liveSteps}
+        activePlan={activePlan}
         errorMessage={errorMessage}
         onSend={handleSend}
         onStop={handleStop}
@@ -499,6 +551,7 @@ export const App: React.FC = () => {
         onFilesSelected={handleFilesSelected}
         onToggleSelectDocument={handleToggleSelectDocument}
         onDeleteDocument={handleDeleteDocument}
+        onUpdateModeOverride={handleUpdateModeOverride}
         onToggleDrawer={() => setIsDrawerOpen((prev) => !prev)}
       />
     </div>

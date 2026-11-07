@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Conversation, DocumentItem, Message } from '../types';
+import { Conversation, DocumentItem, Message, LiveAgentStep, RoutingPlan } from '../types';
 import { MessageItem } from './MessageItem';
 import { MessageInput } from './MessageInput';
 import { DocumentsDrawer } from './DocumentsDrawer';
@@ -9,7 +9,7 @@ import { ParsedViewModal } from './ParsedViewModal';
 import { ChunksViewModal } from './ChunksViewModal';
 import { SearchDebugModal } from './SearchDebugModal';
 import { retryDocumentParse, triggerDocumentIndex } from '../services/api';
-import { Bot, AlertCircle, RefreshCw, MessageSquare, Files, UploadCloud, Sparkles } from 'lucide-react';
+import { Bot, AlertCircle, RefreshCw, MessageSquare, Files, UploadCloud, Sparkles, Loader2, CheckCircle2 } from 'lucide-react';
 
 interface ChatPanelProps {
   conversation: Conversation | null;
@@ -20,12 +20,15 @@ interface ChatPanelProps {
   documents: DocumentItem[];
   selectedDocumentIds: string[];
   isDrawerOpen: boolean;
+  liveSteps?: LiveAgentStep[];
+  activePlan?: RoutingPlan | null;
   onSend: (message: string) => void;
   onStop: () => void;
   onRetry: () => void;
   onFilesSelected: (files: File[]) => void;
   onToggleSelectDocument: (docId: string) => void;
   onDeleteDocument: (docId: string) => void;
+  onUpdateModeOverride?: (docId: string, override: 'direct' | 'rag' | null) => Promise<void>;
   onToggleDrawer: () => void;
 }
 
@@ -38,12 +41,15 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   documents,
   selectedDocumentIds,
   isDrawerOpen,
+  liveSteps = [],
+  activePlan,
   onSend,
   onStop,
   onRetry,
   onFilesSelected,
   onToggleSelectDocument,
   onDeleteDocument,
+  onUpdateModeOverride,
   onToggleDrawer,
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -149,6 +155,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           <h2 className="font-semibold text-slate-800 text-sm truncate max-w-md">
             {conversation?.title || (conversation ? 'Untitled Conversation' : 'Select or Start a Chat')}
           </h2>
+          {activePlan && activePlan.mode !== 'none' && (
+            <span
+              className="hidden sm:inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 border border-purple-200"
+              title={activePlan.summary}
+            >
+              <span>{activePlan.mode.toUpperCase()}</span>
+            </span>
+          )}
         </div>
 
         {/* Header Action Buttons */}
@@ -223,13 +237,41 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                       <Bot className="w-4 h-4 text-indigo-600" />
                     </div>
                     <div className="rounded-2xl rounded-tl-none px-4 py-3 text-sm bg-white border border-slate-200 text-slate-800 shadow-sm">
+                      {/* Live Agent Execution Steps */}
+                      {liveSteps && liveSteps.length > 0 && (
+                        <div className="mb-2.5 space-y-1.5 pb-2.5 border-b border-slate-100">
+                          {liveSteps.map((s, idx) => (
+                            <div key={idx} className="flex items-center space-x-2 text-xs">
+                              {s.isSearching ? (
+                                <Loader2 className="w-3.5 h-3.5 text-indigo-600 animate-spin flex-shrink-0" />
+                              ) : (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
+                              )}
+                              <span className="font-medium text-slate-700">
+                                {s.tool === 'search_documents'
+                                  ? s.isSearching
+                                    ? `Searching: "${s.query || ''}"`
+                                    : `Found ${s.result_count ?? 0} passage${s.result_count !== 1 ? 's' : ''}${s.pages && s.pages.length > 0 ? ` (pp. ${s.pages.join(', ')})` : ''}`
+                                  : s.tool === 'read_surrounding'
+                                  ? s.isSearching
+                                    ? 'Reading surrounding passages...'
+                                    : `Read ${s.result_count ?? 0} neighboring passage(s)`
+                                  : s.tool === 'list_documents'
+                                  ? 'Inspected available documents'
+                                  : s.tool}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
                       {streamingText ? (
                         <div className="prose-chat text-slate-800">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {streamingText
                               .replace(/\[\[(?:cite:[^\]]*)?$/i, '')
                               .replace(
-                                /\[\[cite:\s*([^\|\]]+?)(?:\s*\|\s*p\.?\s*(\d+))?\s*\]\]/gi,
+                                /\[\[cite:\s*([^\|\]]+?)(?:\s*\|\s*p\.?\s*([\d\-]+))?\s*\]\]/gi,
                                 (_, f, p) => `[📄 ${f}${p ? ` · p.${p}` : ''}]`
                               )}
                           </ReactMarkdown>
@@ -296,6 +338,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           onRetryParse={handleRetryParse}
           onViewChunks={setChunksDoc}
           onRetryIndex={handleRetryIndex}
+          onUpdateModeOverride={onUpdateModeOverride}
         />
 
         {/* Parsed Document Modal */}
