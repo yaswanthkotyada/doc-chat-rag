@@ -5,7 +5,7 @@ from app.schemas.conversation import (
     ConversationListItem,
     MessageRead,
 )
-from app.schemas.document import DocumentRead
+from app.schemas.document import ChunkRead, DocumentChunksResponse, DocumentRead
 from app.schemas.health import HealthResponse
 
 __all__ = [
@@ -15,5 +15,7 @@ __all__ = [
     "ConversationListItem",
     "MessageRead",
     "DocumentRead",
+    "ChunkRead",
+    "DocumentChunksResponse",
     "HealthResponse",
 ]

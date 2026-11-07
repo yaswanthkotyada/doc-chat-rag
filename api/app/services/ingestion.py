@@ -10,7 +10,9 @@ from sqlalchemy import delete, select, update
 
 from app.config import settings
 from app.db import async_session_factory
-from app.models.document import Document, DocumentPage
+from app.models.document import Chunk, Document, DocumentPage
+from app.services.chunking import chunk_document
+from app.services.embeddings import get_embedding_service
 from app.services.parsers import (
     DoclingClientParser,
     DocumentParserError,
@@ -19,6 +21,7 @@ from app.services.parsers import (
 )
 from app.services.storage import (
     get_document_file_path,
+    get_document_parsed_json_path,
     save_parsed_artifacts,
 )
 
@@ -52,6 +55,7 @@ async def parse_document_task(document_id: uuid.UUID) -> None:
     async with _parse_semaphore:
         logger.info("Starting parse task execution for document %s", document_id)
         now = datetime.now(timezone.utc)
+        enqueue_index = False
 
         # 1. Initialize parsing state in DB
         async with async_session_factory() as db:
@@ -170,6 +174,10 @@ async def parse_document_task(document_id: uuid.UUID) -> None:
                 if document.mode == "rag":
                     document.status = "ready"
                     document.error = None
+                    document.index_status = "pending"
+                    enqueue_index = True
+                else:
+                    document.index_status = "skipped"
 
                 await db.commit()
 
@@ -178,6 +186,9 @@ async def parse_document_task(document_id: uuid.UUID) -> None:
                 document_id,
                 parsed_doc.page_count,
             )
+
+            if enqueue_index:
+                asyncio.create_task(index_document_task(document_id))
 
         except ParserUnavailableError as pue:
             logger.warning("Docling service unavailable during parsing for %s: %s", document_id, pue)
@@ -215,6 +226,138 @@ async def parse_document_task(document_id: uuid.UUID) -> None:
                         doc.status = "failed"
                         doc.error = safe_error
                     await db.commit()
+
+
+async def index_document_task(document_id: uuid.UUID) -> None:
+    """
+    Background worker that chunks, embeds, and indexes a parsed document.
+    Idempotent: clears any existing chunks for this document before inserting new ones.
+    """
+    logger.info("Queued index task for document %s...", document_id)
+    doc_filename = ""
+
+    # 1. Update index_status to 'indexing'
+    async with async_session_factory() as db:
+        stmt = select(Document).where(Document.id == document_id)
+        result = await db.execute(stmt)
+        document = result.scalar_one_or_none()
+
+        if not document:
+            logger.warning("Index task aborted: document %s not found in DB", document_id)
+            return
+
+        if document.parse_status != "parsed":
+            logger.warning(
+                "Document %s is not parsed yet (parse_status=%s). Skipping index.",
+                document_id, document.parse_status
+            )
+            return
+
+        document.index_status = "indexing"
+        document.index_error = None
+        doc_filename = document.filename
+        await db.commit()
+
+    try:
+        # 2. Read parsed docling.json if present, or fallback to DocumentPage rows
+        raw_json = None
+        json_path = get_document_parsed_json_path(document_id)
+        if json_path.exists():
+            try:
+                import json
+                with open(json_path, "r", encoding="utf-8") as f:
+                    raw_json = json.load(f)
+            except Exception as j_err:
+                logger.warning("Could not read docling.json for %s: %s; falling back to DB pages", document_id, j_err)
+
+        pages_data = None
+        if not raw_json:
+            async with async_session_factory() as db:
+                p_stmt = (
+                    select(DocumentPage)
+                    .where(DocumentPage.document_id == document_id)
+                    .order_by(DocumentPage.page_no.asc())
+                )
+                p_res = await db.execute(p_stmt)
+                pages_data = [
+                    {"page_no": p.page_no, "markdown": p.markdown}
+                    for p in p_res.scalars().all()
+                ]
+
+        # 3. Chunk document using services/chunking.py
+        chunks = chunk_document(
+            doc_name=doc_filename,
+            raw_json=raw_json,
+            pages=pages_data,
+            target_tokens=settings.CHUNK_TARGET_TOKENS,
+            max_tokens=settings.CHUNK_MAX_TOKENS,
+            overlap_tokens=settings.CHUNK_OVERLAP_TOKENS,
+            min_tokens=settings.CHUNK_MIN_TOKENS,
+        )
+
+        logger.info("Document %s chunked into %d chunk(s)", document_id, len(chunks))
+
+        # 4. Generate embeddings using services/embeddings.py
+        embeddings = []
+        if chunks:
+            embed_texts = [c.embed_text for c in chunks]
+            embedding_service = get_embedding_service()
+            embeddings = await embedding_service.embed_chunks(embed_texts, task_type="RETRIEVAL_DOCUMENT")
+
+        # 5. Persist chunks and update document state atomically
+        finished_at = datetime.now(timezone.utc)
+        async with async_session_factory() as db:
+            # Delete previous chunks if any (idempotent retry)
+            await db.execute(delete(Chunk).where(Chunk.document_id == document_id))
+
+            # Insert new chunks
+            for c, emb in zip(chunks, embeddings):
+                db_chunk = Chunk(
+                    document_id=document_id,
+                    chunk_index=c.chunk_index,
+                    text=c.text,
+                    embed_text=c.embed_text,
+                    page_start=c.page_start,
+                    page_end=c.page_end,
+                    heading_path=c.heading_path,
+                    chunk_type=c.chunk_type,
+                    token_count=c.token_count,
+                    char_start=c.char_start,
+                    char_end=c.char_end,
+                    embedding=emb,
+                )
+                db.add(db_chunk)
+
+            # Update Document record
+            doc_stmt = select(Document).where(Document.id == document_id)
+            doc_res = await db.execute(doc_stmt)
+            doc = doc_res.scalar_one_or_none()
+            if doc:
+                doc.index_status = "indexed"
+                doc.index_error = None
+                doc.chunks_count = len(chunks)
+                doc.indexed_at = finished_at
+                doc.status = "ready"
+                doc.error = None
+
+            await db.commit()
+
+        logger.info(
+            "Document %s indexed successfully with %d chunks (status=ready, index_status=indexed)",
+            document_id, len(chunks)
+        )
+
+    except Exception as exc:
+        logger.error("Indexing failed for document %s: %s", document_id, exc, exc_info=False)
+        safe_err = f"Document indexing failed: {exc}"[:250]
+        async with async_session_factory() as db:
+            doc_stmt = select(Document).where(Document.id == document_id)
+            doc_res = await db.execute(doc_stmt)
+            doc = doc_res.scalar_one_or_none()
+            if doc:
+                doc.index_status = "failed"
+                doc.index_error = safe_err
+            await db.commit()
 
 
 async def ingest_document(document_id: uuid.UUID) -> None:
@@ -347,18 +490,21 @@ async def ingest_document(document_id: uuid.UUID) -> None:
             else:
                 document.mode = None
 
-            # 5. Parsing qualification (Stage 5)
+            # 5. Parsing & Indexing qualification (Stages 5 & 6)
             if document.status == "ready":
                 if should_parse_document(document.mime_type, document.mode):
                     document.parse_status = "pending"
+                    document.index_status = "pending" if document.mode == "rag" else "skipped"
                     enqueue_parse = True
                     # RAG mode documents remain in 'processing' status until parse finishes
                     if document.mode == "rag":
                         document.status = "processing"
                 else:
                     document.parse_status = "skipped"
+                    document.index_status = "skipped"
             else:
                 document.parse_status = "skipped"
+                document.index_status = "skipped"
 
         except Exception as unhandled:
             logger.error("Unhandled ingestion exception for %s: %s", document_id, unhandled, exc_info=False)
@@ -366,6 +512,7 @@ async def ingest_document(document_id: uuid.UUID) -> None:
             document.error = "An error occurred during file ingestion"
             document.mode = None
             document.parse_status = "skipped"
+            document.index_status = "skipped"
 
         await db.commit()
         logger.info(

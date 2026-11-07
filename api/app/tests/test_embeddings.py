@@ -130,3 +130,4 @@ async def test_live_embed_20_chunks_and_query():
     query_emb = await service.embed_query("How does vector search work?")
     assert len(query_emb) == 768
     assert any(v != 0.0 for v in query_emb)
+

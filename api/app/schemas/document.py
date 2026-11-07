@@ -31,6 +31,12 @@ class DocumentRead(BaseModel):
     pages_parsed: Optional[int] = 0
     parse_options: Optional[Dict[str, Any]] = None
 
+    # Indexing metadata (Stage 6)
+    index_status: Optional[str] = None
+    index_error: Optional[str] = None
+    chunks_count: Optional[int] = 0
+    indexed_at: Optional[datetime] = None
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -94,4 +100,33 @@ class DocumentPageDetail(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ChunkRead(BaseModel):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    chunk_index: int
+    text: str
+    embed_text: str
+    page_start: int
+    page_end: int
+    heading_path: List[str] = []
+    chunk_type: str = "text"
+    token_count: int = 0
+    char_start: Optional[int] = None
+    char_end: Optional[int] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DocumentChunksResponse(BaseModel):
+    document_id: uuid.UUID
+    total_chunks: int
+    chunks: List[ChunkRead] = []
+    index_status: Optional[str] = None
+    indexed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
 

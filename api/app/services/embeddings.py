@@ -76,16 +76,31 @@ class GeminiEmbeddingService:
         self.base_backoff_seconds = base_backoff_seconds
 
         self._client: Optional[genai.Client] = None
-        self._semaphore = asyncio.Semaphore(self.concurrency)
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._semaphore: asyncio.Semaphore = asyncio.Semaphore(self.concurrency)
 
     def _get_client(self) -> genai.Client:
         if not self.api_key:
             raise EmbeddingConfigurationError(
                 "Gemini API key is not configured. Please set GEMINI_API_KEY in environment."
             )
-        if self._client is None:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._client is None or self._loop != current_loop:
             self._client = genai.Client(api_key=self.api_key)
+            self._loop = current_loop
+            self._semaphore = asyncio.Semaphore(self.concurrency)
+
         return self._client
+
+    @property
+    def semaphore(self) -> asyncio.Semaphore:
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(self.concurrency)
+        return self._semaphore
 
     async def _embed_batch_with_retry(
         self,
@@ -103,7 +118,7 @@ class GeminiEmbeddingService:
         while True:
             attempt += 1
             try:
-                async with self._semaphore:
+                async with self.semaphore:
                     res = await client.aio.models.embed_content(
                         model=self.model,
                         contents=batch_texts,
