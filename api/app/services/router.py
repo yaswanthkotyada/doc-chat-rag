@@ -202,3 +202,4 @@ def route_documents(documents: List[Document]) -> RoutingPlan:
         mode=overall_mode,
         summary=summary,
     )
+

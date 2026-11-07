@@ -139,3 +139,4 @@ def test_routing_plan_to_dict():
     assert len(d["rag_documents"]) == 1
     assert d["direct_documents"][0]["filename"] == "memo.txt"
     assert d["rag_documents"][0]["filename"] == "spec.pdf"
+

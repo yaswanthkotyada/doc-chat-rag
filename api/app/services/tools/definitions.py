@@ -79,3 +79,4 @@ def get_rag_tools() -> list[types.Tool]:
             ]
         )
     ]
+
