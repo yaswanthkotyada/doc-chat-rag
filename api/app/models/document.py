@@ -27,6 +27,7 @@ class Document(Base):
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
     mode = Column(String(20), nullable=True)  # reserved: 'direct' | 'rag'
+    mode_override = Column(String(20), nullable=True)  # Stage 7 manual override: 'direct' | 'rag' | None
     meta = Column(JSONB, nullable=False, default=dict, server_default="{}")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

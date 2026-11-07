@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     EMBED_DIMENSIONS: int = 768
     EMBED_CONCURRENCY: int = 2
 
+    # Stage 7 RAG Chat & Agent Loop settings
+    AGENT_MAX_STEPS: int = 6
+    AGENT_MAX_TOOL_CALLS: int = 8
+    AGENT_MAX_RETRIEVED_TOKENS: int = 30000
+    AGENT_TIMEOUT_SECONDS: int = 60
+    SEARCH_RESULT_MAX_CHARS: int = 1800
+    SEARCH_MAX_TOP_K: int = 10
+    HISTORY_INCLUDE_TOOL_RESULTS: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
