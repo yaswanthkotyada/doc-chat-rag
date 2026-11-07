@@ -7,6 +7,10 @@ import {
   DocumentParseResponse,
   DocumentPagesListResponse,
   DocumentPageDetail,
+  DocumentChunksResponse,
+  ChunkDetailResponse,
+  DocumentIndexResponse,
+  SearchDebugResponse,
 } from '../types';
 
 export const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
@@ -295,3 +299,60 @@ export async function streamChatMessage({
     onError(err.message || 'Network error encountered.');
   }
 }
+
+// --- Stage 6: Chunking, Indexing, and Search API functions ---
+
+export async function fetchDocumentIndex(documentId: string): Promise<DocumentIndexResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}/index`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch document index status');
+  }
+  return res.json();
+}
+
+export async function triggerDocumentIndex(documentId: string, reindex: boolean = false): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}/index/retry?reindex=${reindex}`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Failed to trigger indexing');
+  }
+  return res.json();
+}
+
+export async function fetchDocumentChunks(documentId: string): Promise<DocumentChunksResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/documents/${documentId}/chunks`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch document chunks');
+  }
+  return res.json();
+}
+
+export async function fetchChunkDetail(chunkId: string): Promise<ChunkDetailResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/chunks/${chunkId}`);
+  if (!res.ok) {
+    throw new Error('Failed to fetch chunk details');
+  }
+  return res.json();
+}
+
+export async function searchDebug(payload: {
+  query: string;
+  mode: string;
+  limit?: number;
+  document_ids?: string[];
+  conversation_id?: string;
+}): Promise<SearchDebugResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/search/debug`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || 'Search query failed');
+  }
+  return res.json();
+}
+

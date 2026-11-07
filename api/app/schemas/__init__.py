@@ -5,7 +5,13 @@ from app.schemas.conversation import (
     ConversationListItem,
     MessageRead,
 )
-from app.schemas.document import ChunkRead, DocumentChunksResponse, DocumentRead
+from app.schemas.document import (
+    ChunkDetailResponse,
+    ChunkRead,
+    DocumentChunksResponse,
+    DocumentIndexResponse,
+    DocumentRead,
+)
 from app.schemas.health import HealthResponse
 from app.schemas.search import SearchDebugResponse, SearchRequest, SearchResultItemResponse
 
@@ -18,6 +24,8 @@ __all__ = [
     "DocumentRead",
     "ChunkRead",
     "DocumentChunksResponse",
+    "DocumentIndexResponse",
+    "ChunkDetailResponse",
     "HealthResponse",
     "SearchRequest",
     "SearchDebugResponse",

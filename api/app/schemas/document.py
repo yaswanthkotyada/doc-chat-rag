@@ -130,3 +130,24 @@ class DocumentChunksResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DocumentIndexResponse(BaseModel):
+    document_id: uuid.UUID
+    index_status: Optional[str] = None
+    index_error: Optional[str] = None
+    chunks_total: int = 0
+    chunks_embedded: int = 0
+    indexed_at: Optional[datetime] = None
+    embedding_model: Optional[str] = None
+    embedding_dimension: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChunkDetailResponse(BaseModel):
+    chunk: ChunkRead
+    prev_chunk: Optional[ChunkRead] = None
+    next_chunk: Optional[ChunkRead] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+

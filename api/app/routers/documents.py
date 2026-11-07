@@ -14,8 +14,10 @@ from app.db import get_db
 from app.models.conversation import Conversation
 from app.models.document import Chunk, Document, DocumentPage
 from app.schemas.document import (
+    ChunkDetailResponse,
     ChunkRead,
     DocumentChunksResponse,
+    DocumentIndexResponse,
     DocumentPageDetail,
     DocumentPagesListResponse,
     DocumentPageSummary,
@@ -469,10 +471,48 @@ async def download_parsed_markdown(
     )
 
 
+@router.get("/documents/{document_id}/index", response_model=DocumentIndexResponse)
+async def get_document_index_status(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get index status, chunk counts, and embedding params for a document."""
+    stmt = select(Document).where(Document.id == document_id)
+    res = await db.execute(stmt)
+    document = res.scalar_one_or_none()
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    count_stmt = select(func.count(Chunk.id)).where(Chunk.document_id == document_id)
+    total_chunks = await db.scalar(count_stmt) or 0
+
+    count_emb_stmt = select(func.count(Chunk.id)).where(
+        Chunk.document_id == document_id,
+        Chunk.embedding.isnot(None),
+    )
+    embedded_chunks = await db.scalar(count_emb_stmt) or 0
+
+    return DocumentIndexResponse(
+        document_id=document_id,
+        index_status=document.index_status,
+        index_error=document.index_error,
+        chunks_total=total_chunks,
+        chunks_embedded=embedded_chunks,
+        indexed_at=document.indexed_at,
+        embedding_model=settings.EMBED_MODEL,
+        embedding_dimension=settings.EMBED_DIMENSIONS,
+    )
+
+
 @router.post("/documents/{document_id}/index", status_code=status.HTTP_202_ACCEPTED)
 @router.post("/documents/{document_id}/retry-index", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/documents/{document_id}/index/retry", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_document_index(
     document_id: uuid.UUID,
+    reindex: bool = Query(False, description="Force re-indexing even if already indexed"),
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger manual chunking and indexing for a parsed document."""
@@ -532,5 +572,41 @@ async def get_document_chunks(
         chunks=[ChunkRead.model_validate(c) for c in chunks],
         index_status=document.index_status,
         indexed_at=document.indexed_at,
+    )
+
+
+@router.get("/chunks/{chunk_id}", response_model=ChunkDetailResponse)
+async def get_chunk_with_neighbours(
+    chunk_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get full chunk details along with previous and next neighbours."""
+    c_stmt = select(Chunk).where(Chunk.id == chunk_id)
+    c_res = await db.execute(c_stmt)
+    chunk = c_res.scalar_one_or_none()
+    if not chunk:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Chunk not found",
+        )
+
+    # Fetch previous chunk
+    prev_stmt = select(Chunk).where(
+        Chunk.document_id == chunk.document_id,
+        Chunk.chunk_index == chunk.chunk_index - 1,
+    )
+    prev_chunk = (await db.execute(prev_stmt)).scalar_one_or_none()
+
+    # Fetch next chunk
+    next_stmt = select(Chunk).where(
+        Chunk.document_id == chunk.document_id,
+        Chunk.chunk_index == chunk.chunk_index + 1,
+    )
+    next_chunk = (await db.execute(next_stmt)).scalar_one_or_none()
+
+    return ChunkDetailResponse(
+        chunk=ChunkRead.model_validate(chunk),
+        prev_chunk=ChunkRead.model_validate(prev_chunk) if prev_chunk else None,
+        next_chunk=ChunkRead.model_validate(next_chunk) if next_chunk else None,
     )
 

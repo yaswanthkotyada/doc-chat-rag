@@ -71,6 +71,12 @@ export interface DocumentItem {
   parse_finished_at?: string | null;
   pages_parsed?: number | null;
   parse_options?: Record<string, any> | null;
+
+  // Stage 6: Indexing Metadata
+  index_status?: 'pending' | 'indexing' | 'indexed' | 'failed' | 'skipped' | null;
+  index_error?: string | null;
+  chunks_count?: number | null;
+  indexed_at?: string | null;
 }
 
 export interface DocumentParseSummary {
@@ -144,3 +150,74 @@ export interface HealthStatus {
   pgvector: 'ok' | 'missing';
   gemini_key_configured: boolean;
 }
+
+// --- Stage 6: Chunking, Indexing, and Search Interfaces ---
+
+export interface ChunkItem {
+  id: string;
+  document_id: string;
+  chunk_index: number;
+  text: string;
+  embed_text: string;
+  page_start: number;
+  page_end: number;
+  heading_path: string[];
+  chunk_type: 'text' | 'table' | 'list' | 'mixed' | string;
+  token_count: number;
+  char_start?: number | null;
+  char_end?: number | null;
+  created_at: string;
+}
+
+export interface DocumentChunksResponse {
+  document_id: string;
+  total_chunks: number;
+  chunks: ChunkItem[];
+  index_status?: string | null;
+  indexed_at?: string | null;
+}
+
+export interface ChunkDetailResponse {
+  chunk: ChunkItem;
+  prev_chunk?: ChunkItem | null;
+  next_chunk?: ChunkItem | null;
+}
+
+export interface DocumentIndexResponse {
+  document_id: string;
+  index_status?: string | null;
+  index_error?: string | null;
+  chunks_total: number;
+  chunks_embedded: number;
+  indexed_at?: string | null;
+  embedding_model?: string | null;
+  embedding_dimension?: number | null;
+}
+
+export interface SearchResultItem {
+  chunk_id: string;
+  document_id: string;
+  chunk_index: number;
+  document_filename: string;
+  text: string;
+  page_start: number;
+  page_end: number;
+  heading_path: string[];
+  chunk_type: string;
+  token_count: number;
+  score: number;
+  vector_score?: number | null;
+  vector_rank?: number | null;
+  keyword_score?: number | null;
+  keyword_rank?: number | null;
+}
+
+export interface SearchDebugResponse {
+  query: string;
+  mode: 'vector' | 'keyword' | 'hybrid' | string;
+  limit: number;
+  total_results: number;
+  duration_ms: number;
+  items: SearchResultItem[];
+}
+

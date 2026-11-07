@@ -15,6 +15,7 @@ import {
   Eye,
   Clock,
   RefreshCw,
+  Layers,
 } from 'lucide-react';
 
 interface DocumentsDrawerProps {
@@ -24,6 +25,8 @@ interface DocumentsDrawerProps {
   onDeleteDocument: (docId: string) => void;
   onViewParsed?: (doc: DocumentItem) => void;
   onRetryParse?: (docId: string) => void;
+  onViewChunks?: (doc: DocumentItem) => void;
+  onRetryIndex?: (docId: string) => void;
 }
 
 export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
@@ -33,6 +36,8 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
   onDeleteDocument,
   onViewParsed,
   onRetryParse,
+  onViewChunks,
+  onRetryIndex,
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -144,8 +149,15 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
                           </span>
                         )}
                         {doc.mode === 'rag' && (
-                          <span className="bg-amber-100 text-amber-700 px-1.5 py-0.2 rounded font-semibold text-[10px]" title="File exceeds direct mode limits; reserved for RAG stage">
-                            RAG (Large)
+                          <span
+                            className="bg-amber-100 text-amber-700 px-1.5 py-0.2 rounded font-semibold text-[10px]"
+                            title={
+                              doc.index_status === 'indexed'
+                                ? 'Indexed and searchable in Search debug; answering arrives in the next stage'
+                                : 'File exceeds direct mode limits; reserved for RAG stage'
+                            }
+                          >
+                            {doc.index_status === 'indexed' ? 'RAG (Indexed)' : 'RAG (Large)'}
                           </span>
                         )}
                         {doc.status === 'processing' && !isParsing && !isParsePending && (
@@ -261,11 +273,103 @@ export const DocumentsDrawer: React.FC<DocumentsDrawerProps> = ({
                           </button>
                         </div>
                       )}
+                      {/* Stage 6 Chunking & Indexing Status Badges & Controls */}
+                      {doc.index_status === 'indexing' && (
+                        <div className="mt-1.5 flex items-center space-x-1.5 text-[10px] text-blue-700 font-medium">
+                          <Loader2 className="w-3 h-3 animate-spin text-blue-600 flex-shrink-0" />
+                          <span>Embedding chunks with Gemini...</span>
+                        </div>
+                      )}
+
+                      {doc.index_status === 'pending' && (
+                        <div className="mt-1.5 flex items-center space-x-1 text-[10px] text-amber-700 font-medium">
+                          <Clock className="w-3 h-3 animate-pulse text-amber-500" />
+                          <span>Indexing queued...</span>
+                        </div>
+                      )}
+
+                      {doc.index_status === 'indexed' && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span
+                            className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 text-emerald-800"
+                            title={`Indexed ${doc.chunks_count || ''} chunks`}
+                          >
+                            <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                            <span>Indexed{doc.chunks_count ? ` (${doc.chunks_count} chunks)` : ''}</span>
+                          </span>
+
+                          {onViewChunks && (
+                            <button
+                              onClick={() => onViewChunks(doc)}
+                              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200 transition-colors shadow-2xs cursor-pointer"
+                              title="Browse chunks and check embeddings"
+                            >
+                              <Layers className="w-3 h-3" />
+                              <span>Chunks</span>
+                            </button>
+                          )}
+
+                          {onRetryIndex && (
+                            <button
+                              onClick={() => onRetryIndex(doc.id)}
+                              className="p-0.5 text-slate-400 hover:text-slate-600 rounded transition-colors"
+                              title="Re-run indexing"
+                            >
+                              <RefreshCw className="w-2.5 h-2.5" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {doc.index_status === 'failed' && (
+                        <div className="mt-1.5 space-y-1">
+                          <div
+                            className="flex items-center space-x-1 text-[10px] text-rose-600 font-medium truncate"
+                            title={doc.index_error || 'Indexing failed'}
+                          >
+                            <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                            <span className="truncate">{doc.index_error || 'Indexing failed'}</span>
+                          </div>
+                          {onRetryIndex && (
+                            <button
+                              onClick={() => onRetryIndex(doc.id)}
+                              className="inline-flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors cursor-pointer"
+                              title="Retry indexing"
+                            >
+                              <RefreshCw className="w-2.5 h-2.5" />
+                              <span>Retry Index</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* On-demand Index button for parsed documents that have not been indexed yet */}
+                      {isParsed && (!doc.index_status || doc.index_status === 'skipped') && onRetryIndex && (
+                        <div className="mt-1 flex items-center space-x-1">
+                          <button
+                            onClick={() => onRetryIndex(doc.id)}
+                            className="text-[10px] text-purple-600 hover:text-purple-800 hover:underline flex items-center space-x-1 cursor-pointer font-medium"
+                            title="Chunk and index document for vector/keyword search"
+                          >
+                            <Layers className="w-2.5 h-2.5" />
+                            <span>Index Chunks</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Actions */}
                   <div className="flex items-center space-x-1 ml-2">
+                    {doc.index_status === 'indexed' && onViewChunks && (
+                      <button
+                        onClick={() => onViewChunks(doc)}
+                        className="p-1.5 text-slate-400 hover:text-purple-600 rounded transition-colors"
+                        title="Open Chunks View"
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     {isParsed && onViewParsed && (
                       <button
                         onClick={() => onViewParsed(doc)}

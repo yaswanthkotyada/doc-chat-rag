@@ -6,8 +6,10 @@ import { MessageItem } from './MessageItem';
 import { MessageInput } from './MessageInput';
 import { DocumentsDrawer } from './DocumentsDrawer';
 import { ParsedViewModal } from './ParsedViewModal';
-import { retryDocumentParse } from '../services/api';
-import { Bot, AlertCircle, RefreshCw, MessageSquare, Files, UploadCloud } from 'lucide-react';
+import { ChunksViewModal } from './ChunksViewModal';
+import { SearchDebugModal } from './SearchDebugModal';
+import { retryDocumentParse, triggerDocumentIndex } from '../services/api';
+import { Bot, AlertCircle, RefreshCw, MessageSquare, Files, UploadCloud, Sparkles } from 'lucide-react';
 
 interface ChatPanelProps {
   conversation: Conversation | null;
@@ -49,6 +51,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const [userHasScrolledUp, setUserHasScrolledUp] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [inspectDoc, setInspectDoc] = useState<DocumentItem | null>(null);
+  const [chunksDoc, setChunksDoc] = useState<DocumentItem | null>(null);
+  const [isSearchDebugOpen, setIsSearchDebugOpen] = useState(false);
   const dragCounterRef = useRef(0);
 
   const handleRetryParse = async (docId: string) => {
@@ -56,6 +60,14 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       await retryDocumentParse(docId);
     } catch (err: any) {
       console.error('Failed to retry parse:', err);
+    }
+  };
+
+  const handleRetryIndex = async (docId: string) => {
+    try {
+      await triggerDocumentIndex(docId, true);
+    } catch (err: any) {
+      console.error('Failed to trigger index:', err);
     }
   };
 
@@ -139,11 +151,22 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           </h2>
         </div>
 
-        {/* Documents Drawer Toggle Button */}
+        {/* Header Action Buttons */}
         <div className="flex items-center space-x-2">
+          {/* Search Debug Button */}
+          <button
+            onClick={() => setIsSearchDebugOpen(true)}
+            className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+            title="Open Search Debug Studio (Vector / Keyword / Hybrid Retrieval)"
+          >
+            <Sparkles className="w-4 h-4 text-purple-600" />
+            <span>Search Debug</span>
+          </button>
+
+          {/* Documents Drawer Toggle Button */}
           <button
             onClick={onToggleDrawer}
-            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
               isDrawerOpen
                 ? 'bg-indigo-50 border-indigo-300 text-indigo-700 shadow-xs'
                 : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
@@ -271,6 +294,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           onDeleteDocument={onDeleteDocument}
           onViewParsed={setInspectDoc}
           onRetryParse={handleRetryParse}
+          onViewChunks={setChunksDoc}
+          onRetryIndex={handleRetryIndex}
         />
 
         {/* Parsed Document Modal */}
@@ -278,6 +303,21 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           document={inspectDoc}
           isOpen={Boolean(inspectDoc)}
           onClose={() => setInspectDoc(null)}
+        />
+
+        {/* Chunks Inspector Modal (Stage 6) */}
+        <ChunksViewModal
+          document={chunksDoc}
+          isOpen={Boolean(chunksDoc)}
+          onClose={() => setChunksDoc(null)}
+        />
+
+        {/* Search Debug Studio (Stage 6) */}
+        <SearchDebugModal
+          isOpen={isSearchDebugOpen}
+          onClose={() => setIsSearchDebugOpen(false)}
+          conversationId={conversation?.id}
+          documents={documents}
         />
       </div>
     </main>
