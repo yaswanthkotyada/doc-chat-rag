@@ -513,4 +513,69 @@ Benchmark executed against a 6-page corporate operational and technology report 
 
 ---
 
+## Testing & Quality Assurance
+
+### 1. Run Unit Tests (Fast & Pure)
+Runs all unit tests for citations, router logic, and tool execution wrappers without external dependencies:
+```bash
+docker exec doc_poc_api python -m pytest app/tests/test_citations.py app/tests/test_router.py app/tests/test_tools.py -v
+```
+
+### 2. Run Stage 6 Acceptance Tests (Chunking, pgvector, HNSW, FTS, Hybrid RRF)
+Runs the 14 automated tests for chunking, embedding generation, pgvector indexing, and search:
+```bash
+docker exec doc_poc_api python -m pytest app/tests/test_acceptance_stage6.py -v
+```
+
+### 3. Run Stage 7 Acceptance Tests (RAG Chat, Agent Loop, Isolation, Overrides)
+Runs the 9 end-to-end acceptance tests verifying live tool calling, follow-ups, security isolation, limits, and negative question answering:
+```bash
+docker exec doc_poc_api python -m pytest app/tests/test_acceptance_stage7.py -v
+```
+
+### 4. Run Stage 7 Direct vs. RAG Comparative Benchmark
+Runs the 10-question evaluation comparing accuracy, citations, latency, and tokens between Direct mode and RAG mode on the same document:
+```bash
+docker exec doc_poc_api python -m app.eval.run_direct_vs_rag
+```
+
+### 5. Run Stage 6 Retrieval Benchmark
+Runs the retrieval benchmark evaluating Recall@5, Recall@10, and MRR across Vector, Keyword, and Hybrid RRF:
+```bash
+docker exec doc_poc_api python -m app.eval.run_retrieval
+```
+
+---
+
+## Git Push Instructions
+
+Before pushing to your remote git repository:
+
+1. **Verify your working directory is clean and `.env` is ignored:**
+   ```bash
+   git status
+   ```
+   *(Ensure `.env` does not appear in untracked files).*
+
+2. **Stage your changes:**
+   ```bash
+   git add .
+   ```
+
+3. **Commit with a descriptive message:**
+   ```bash
+   git commit -m "feat(rag): stage 7 complete - multi-step tool-calling agent loop, hybrid search, citations, and evaluation"
+   ```
+
+4. **Add your remote repository (if not already set) and push:**
+   ```bash
+   # Add your remote (replace with your repository URL):
+   git remote add origin https://github.com/<your-username>/<your-repo-name>.git
+
+   # Push to main/master:
+   git push -u origin master
+   ```
+
+---
+
 

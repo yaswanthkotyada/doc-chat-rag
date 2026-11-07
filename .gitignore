@@ -43,8 +43,18 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Database data (if mounted locally)
+# Database data & uploads (if mounted locally)
 postgres_data/
+uploads/
+data/
+
+# Pytest / Cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
 
 # OS / Editor
 .DS_Store
