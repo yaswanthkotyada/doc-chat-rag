@@ -79,3 +79,4 @@ def downgrade() -> None:
     op.drop_column('documents', 'chunks_count')
     op.drop_column('documents', 'index_error')
     op.drop_column('documents', 'index_status')
+

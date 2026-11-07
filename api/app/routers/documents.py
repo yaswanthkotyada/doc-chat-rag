@@ -12,8 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.db import get_db
 from app.models.conversation import Conversation
-from app.models.document import Document, DocumentPage
+from app.models.document import Chunk, Document, DocumentPage
 from app.schemas.document import (
+    ChunkRead,
+    DocumentChunksResponse,
     DocumentPageDetail,
     DocumentPagesListResponse,
     DocumentPageSummary,
@@ -21,7 +23,7 @@ from app.schemas.document import (
     DocumentParseSummary,
     DocumentRead,
 )
-from app.services.ingestion import ingest_document, parse_document_task
+from app.services.ingestion import index_document_task, ingest_document, parse_document_task
 from app.services.storage import (
     FileTooLargeError,
     OfficeFileNotSupportedError,
@@ -464,5 +466,71 @@ async def download_parsed_markdown(
         headers={
             "Content-Disposition": f'attachment; filename="{download_filename}"',
         },
+    )
+
+
+@router.post("/documents/{document_id}/index", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/documents/{document_id}/retry-index", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_document_index(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Trigger manual chunking and indexing for a parsed document."""
+    stmt = select(Document).where(Document.id == document_id)
+    res = await db.execute(stmt)
+    document = res.scalar_one_or_none()
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    if document.parse_status != "parsed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Document cannot be indexed before parsing finishes (current parse_status: '{document.parse_status}')",
+        )
+
+    document.index_status = "pending"
+    document.index_error = None
+    await db.commit()
+
+    asyncio.create_task(index_document_task(document_id))
+    return {
+        "document_id": document_id,
+        "index_status": "pending",
+        "message": "Document indexing has been queued",
+    }
+
+
+@router.get("/documents/{document_id}/chunks", response_model=DocumentChunksResponse)
+async def get_document_chunks(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all indexed chunks for a document, ordered by chunk_index."""
+    stmt = select(Document).where(Document.id == document_id)
+    res = await db.execute(stmt)
+    document = res.scalar_one_or_none()
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+    c_stmt = (
+        select(Chunk)
+        .where(Chunk.document_id == document_id)
+        .order_by(Chunk.chunk_index.asc())
+    )
+    c_res = await db.execute(c_stmt)
+    chunks = list(c_res.scalars().all())
+
+    return DocumentChunksResponse(
+        document_id=document_id,
+        total_chunks=len(chunks),
+        chunks=[ChunkRead.model_validate(c) for c in chunks],
+        index_status=document.index_status,
+        indexed_at=document.indexed_at,
     )
 

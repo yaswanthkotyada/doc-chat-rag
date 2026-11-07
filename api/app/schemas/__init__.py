@@ -7,6 +7,7 @@ from app.schemas.conversation import (
 )
 from app.schemas.document import ChunkRead, DocumentChunksResponse, DocumentRead
 from app.schemas.health import HealthResponse
+from app.schemas.search import SearchDebugResponse, SearchRequest, SearchResultItemResponse
 
 __all__ = [
     "ChatRequest",
@@ -18,4 +19,7 @@ __all__ = [
     "ChunkRead",
     "DocumentChunksResponse",
     "HealthResponse",
+    "SearchRequest",
+    "SearchDebugResponse",
+    "SearchResultItemResponse",
 ]
