@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     PARSE_OCR_ENABLED: bool = False
     PARSE_MIN_CHARS_PER_PAGE: int = 50
 
+    # Stage 6 Chunking & Embedding settings
+    CHUNK_TARGET_TOKENS: int = 600
+    CHUNK_MAX_TOKENS: int = 900
+    CHUNK_OVERLAP_TOKENS: int = 80
+    CHUNK_MIN_TOKENS: int = 60
+    EMBED_MODEL: str = "text-embedding-004"
+    EMBED_BATCH_SIZE: int = 100
+    EMBED_DIMENSIONS: int = 768
+    EMBED_CONCURRENCY: int = 2
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
