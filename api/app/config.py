@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     CHUNK_MAX_TOKENS: int = 900
     CHUNK_OVERLAP_TOKENS: int = 80
     CHUNK_MIN_TOKENS: int = 60
-    EMBED_MODEL: str = "text-embedding-004"
+    EMBED_MODEL: str = "gemini-embedding-001"
     EMBED_BATCH_SIZE: int = 100
     EMBED_DIMENSIONS: int = 768
     EMBED_CONCURRENCY: int = 2
