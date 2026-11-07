@@ -1,0 +1,99 @@
+# Evaluation Benchmark Dataset for Stage 6 Retrieval
+# Ground truth maps each question to expected document filename and target page range.
+
+questions:
+  - id: 1
+    query: "What is the Reciprocal Rank Fusion constant k used in hybrid search?"
+    category: "exact_keyword"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 2
+    expected_page_end: 3
+    description: "Evaluates exact numeric constant retrieval (k=60)."
+
+  - id: 2
+    query: "How does the ingestion pipeline handle HTTP 429 rate limit errors from Gemini?"
+    category: "conceptual"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 2
+    expected_page_end: 3
+    description: "Evaluates semantic retrieval for backoff and retry mechanisms."
+
+  - id: 3
+    query: "HNSW cosine distance operator and indexing parameters m and ef_construction"
+    category: "technical_parameter"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 1
+    expected_page_end: 2
+    description: "Evaluates dense vector index parameter query."
+
+  - id: 4
+    query: "Docling layout understanding and per-page segmentation for RAG"
+    category: "exact_keyword"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 1
+    expected_page_end: 2
+    description: "Evaluates layout engine naming and document structure."
+
+  - id: 5
+    query: "How are multi-page tables split when exceeding chunk token limits?"
+    category: "conceptual"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 2
+    expected_page_end: 3
+    description: "Evaluates table header repetition rule discovery."
+
+  - id: 6
+    query: "Telugu and Hindi text indexing trade-offs with simple configuration"
+    category: "multilingual"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 2
+    expected_page_end: 3
+    description: "Evaluates non-Latin stemming limitations in Postgres FTS."
+
+  - id: 7
+    query: "PostgreSQL tables store page metadata and disk holds raw docling artifacts"
+    category: "exact_keyword"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 3
+    expected_page_end: 3
+    description: "Exact phrase keyword match on storage infrastructure."
+
+  - id: 8
+    query: "What dimension does gemini-embedding-001 output for pgvector?"
+    category: "technical_parameter"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 1
+    expected_page_end: 2
+    description: "Evaluates dimensionality parameter (768) retrieval."
+
+  - id: 9
+    query: "Idempotent document re-indexing behavior upon task restart"
+    category: "conceptual"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 2
+    expected_page_end: 3
+    description: "Tests recovery concept without duplicate chunk generation."
+
+  - id: 10
+    query: "RRF"
+    category: "acronym"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 2
+    expected_page_end: 3
+    description: "Isolated short acronym keyword lookup."
+
+  - id: 11
+    query: "Where are raw uploaded files stored on the local container filesystem?"
+    category: "conceptual"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 3
+    expected_page_end: 3
+    description: "Filesystem mount path query."
+
+  - id: 12
+    query: "Data Pipeline Engineering"
+    category: "exact_keyword"
+    expected_doc: "architecture_doc.pdf"
+    expected_page_start: 2
+    expected_page_end: 2
+    description: "Section heading exact query match."

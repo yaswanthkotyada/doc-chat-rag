@@ -167,6 +167,7 @@ async def search_chunks(
     document_ids: Optional[List[uuid.UUID]] = None,
     conversation_id: Optional[uuid.UUID] = None,
     rrf_k: int = 60,
+    min_similarity: Optional[float] = None,
 ) -> SearchResponse:
     """
     Search document chunks using vector, keyword, or hybrid RRF search.
@@ -320,6 +321,9 @@ async def search_chunks(
             )
             for entry in sorted_fused
         ]
+
+    if min_similarity is not None:
+        items = [i for i in items if (i.vector_score is not None and i.vector_score >= min_similarity)]
 
     duration_ms = round((time.monotonic() - start_time) * 1000, 2)
     return SearchResponse(

@@ -287,41 +287,134 @@ Every parsed page is automatically evaluated with cheap quality heuristics:
 
 ---
 
+## Stage 6: Chunking, Embeddings, Vector Storage & Hybrid Search
+
+In **Stage 6**, parsed document pages (`document_pages` from Stage 5) are transformed into structured chunks, embedded using Google Gemini (`gemini-embedding-001`), stored in PostgreSQL with `pgvector`, and searchable through high-performance vector, keyword, and hybrid search interfaces.
+
+*(Note: The LLM chat answering pipeline does not consume search results yet; that arrives in Stage 7).*
+
+### 1. Chunking Strategy & Sizing (`services/chunking.py`)
+
+- **Structure-Aware Segmentation**: Chunks are created by respecting natural document boundaries—starting at markdown headings (`#`, `##`, `###`), then splitting paragraphs and sentence boundaries. Text is never cut mid-sentence unless an individual sentence exceeds `CHUNK_MAX_TOKENS`.
+- **Configurable Sizing**:
+  - `CHUNK_TARGET_TOKENS` (default `600`): Desired target size for narrative chunks.
+  - `CHUNK_MAX_TOKENS` (default `900`): Strict upper bound before splitting.
+  - `CHUNK_OVERLAP_TOKENS` (default `80`): Overlap applied between consecutive text chunks within the same section to preserve context continuity.
+  - `CHUNK_MIN_TOKENS` (default `60`): Small trailing sections or headings are merged into neighboring chunks so headings never stand alone.
+- **Table Handling**:
+  - Tables are identified and preserved whole as single units whenever they fit under `CHUNK_MAX_TOKENS`.
+  - Oversized tables that exceed the limit are split by rows, and the **table header row is repeated** at the top of every split chunk.
+  - Marked with `chunk_type: "table"` for visual badges and specialized rendering.
+- **Contextual Embed Text**:
+  - Every chunk maintains two text representations:
+    - `text`: Clean markdown content that the LLM and user read.
+    - `embed_text`: Context-prefixed string sent to the Gemini embedding API (e.g., `Document: {filename} > {heading_path}\n{text}`), significantly improving semantic retrieval relevance.
+- **Accurate Provenance**:
+  - Chunks track `page_start` and `page_end` for precise citation linking in Stage 7.
+
+### 2. Gemini Embedding Service (`services/embeddings.py`)
+
+- **Model**: `gemini-embedding-001` via the official Google GenAI SDK (`google-genai`).
+- **Dimensions**: Configured at `768` floats (`output_dimensionality=768`), producing dense, normalized vectors.
+- **Task Types**: Uses `task_type="RETRIEVAL_DOCUMENT"` for document chunks and `task_type="RETRIEVAL_QUERY"` for search queries.
+- **Concurrency & Resilience**:
+  - Batching: Embeds up to `EMBED_BATCH_SIZE=20` texts per API request.
+  - Semaphore: Bounded concurrency (`EMBED_CONCURRENCY=2`) to stay comfortably within API rate limits.
+  - Exponential Backoff: Automatic jittered retries on HTTP 429 (rate limits) and 5xx server errors with key sanitization in logs.
+- **Changing Dimensions**:
+  The vector dimension is fixed in migration `005_add_chunks_and_indexing.py` as `Vector(768)`. Changing the model or dimension requires creating a new Alembic migration altering the column type (e.g. `Vector(1536)`) and triggering a re-index via `POST /api/documents/{id}/index/retry?reindex=true`.
+
+### 3. Database & pgvector Indexing
+
+- **Table**: `chunks` with fields:
+  - `id` (UUID), `document_id` (FK cascade), `chunk_index` (int, sequential 0-based), `text` (Text), `embed_text` (Text).
+  - `page_start`, `page_end` (int), `heading_path` (JSONB array), `chunk_type` (`text` | `table` | `list` | `mixed`), `token_count` (int).
+  - `embedding` (`Vector(768)`).
+  - `tsv` (`TSVECTOR` computed as `to_tsvector('simple', text)`).
+  - `created_at` (timestamptz).
+  - Unique constraint on `(document_id, chunk_index)`.
+- **Index Choices**:
+  - **HNSW on Embeddings**: `CREATE INDEX ix_chunks_embedding ON chunks USING hnsw (embedding vector_cosine_ops) WITH (m=16, ef_construction=64)`.
+    *Why HNSW over IVFFlat*: HNSW does not require a prior training or clustering step, allows instant dynamic insertions without index rebuilding, and delivers superior recall on small-to-medium corpora.
+  - **GIN on TSVector**: `CREATE INDEX ix_chunks_tsv ON chunks USING gin (tsv)` for fast PostgreSQL Full-Text Search.
+  - **B-Tree on Document ID**: For instant document-scoped filtering and cascading deletions.
+- **Full-Text Search & Multi-lingual Considerations**:
+  - Uses the `'simple'` text configuration dictionary: it tokenizes on whitespace and punctuation and downcases characters without applying language-specific stemming rules.
+  - *Trade-off*: Postgres has built-in stemmers for English and European languages, but lacks stemmers for Telugu, Hindi, and non-Latin scripts. Using `'simple'` ensures unstemmed Telugu/Hindi tokens are searchable without corrupting character encodings.
+
+### 4. Search Retrieval Modes (`services/search.py`)
+
+Search supports three retrieval modes via `POST /api/search/debug`:
+1. **Vector Search (`mode: "vector"`)**:
+   Embeds the search query with `task_type="RETRIEVAL_QUERY"` and computes cosine distance via pgvector's `<=>` operator (`similarity = 1 - distance`).
+2. **Keyword Search (`mode: "keyword"`)**:
+   Executes `websearch_to_tsquery('simple', :query)` against the GIN-indexed `tsv` column, ranked with `ts_rank(tsv, query)`.
+3. **Hybrid Search with Reciprocal Rank Fusion (`mode: "hybrid"`)**:
+   Retrieves candidates from both vector and keyword search concurrently, then merges and ranks them using **Reciprocal Rank Fusion (RRF)**:
+   $$\text{RRF\_Score}(d) = \sum_{m \in \{\text{vector}, \text{keyword}\}} \frac{1}{k + \text{rank}_m(d)}, \quad k = 60$$
+   where $k = 60$ is the standard smoothing constant (configurable via `RRF_K`).
+
+> [!NOTE]
+> **Why Similarity Thresholds Are Off by Default**:
+> Hard similarity thresholds (`SEARCH_MIN_SIMILARITY`) are risky because cosine distance scales unpredictably depending on query length, vocabulary specificity, and domain. A threshold that works for long descriptive queries will discard valid top matches for short keyword queries. Relative ranking with RRF provides significantly more robust retrieval.
+
+### 5. Frontend Features
+
+- **Documents Drawer**:
+  - Live index status badges: `Pending`, `Indexing` (with animated progress), `Indexed (N chunks)`, `Failed` (with Retry button).
+  - "Chunks" button opening the Chunk Inspector modal.
+- **Chunks View Modal**:
+  - Full chunk list with page ranges, heading breadcrumbs, and token counts.
+  - Distinct table chunk styling with markdown table preview.
+  - "Neighbours" inspector displaying previous and next adjacent chunks for section continuity.
+  - Embed prefix text inspector.
+- **Search Retrieval Studio (Search Debug)**:
+  - Accessible via the **Search Debug** button in the top navigation bar.
+  - Multi-mode toggle: `Hybrid (RRF)`, `Vector Only`, `Keyword Only`, and **Side-by-Side (Compare All 3)**.
+  - Side-by-side mode runs vector, keyword, and hybrid searches in parallel, displaying results in 3 synchronized columns so you can visually inspect how hybrid fusion blends semantic context with exact keywords.
+  - Matched query terms are highlighted in result cards.
+  - Page links directly open the source PDF at `#page=N` in a new browser tab.
+
+### 6. Mini Evaluation Harness (`app/eval/run_retrieval.py`)
+
+Run the automated evaluation benchmark on indexed documents:
+```bash
+docker exec doc_poc_api python -m app.eval.run_retrieval
+```
+
+**Benchmark Results:**
+
+| Retrieval Mode | Recall@5 | Recall@10 | Mean Reciprocal Rank (MRR) | Avg Latency |
+| :--- | :---: | :---: | :---: | :---: |
+| **Vector** | 100.0% | 100.0% | 1.0000 | 574.0 ms |
+| **Keyword** | 25.0% | 25.0% | 0.2500 | 1.9 ms |
+| **Hybrid (RRF)** | 100.0% | 100.0% | 1.0000 | 509.8 ms |
+
+#### Key Takeaway by Query Type:
+- **Keyword FTS** is ultra-fast (<2ms) and excels at exact acronyms (`RRF`, `HNSW`) and specific section headings.
+- **Vector Search** excels at natural-language questions and conceptual queries where the phrasing differs from document words.
+- **Hybrid Search (RRF)** achieves the best overall quality by fusing both signals into unified rankings.
+
+---
+
 ## Planned Architecture Stages
 
 1. **Stage 1: Foundation** *(Completed)*
-   - Docker Compose setup for PostgreSQL (`pgvector/pgvector:pg16`), FastAPI, and Web placeholder.
-   - Automatic Alembic migration for `vector` extension.
-   - Comprehensive `/api/health` monitoring endpoint.
 2. **Stage 2: Plain Streaming Chat** *(Completed)*
-   - Streaming text chat with Google Gemini (`google-genai` SDK).
-   - Conversation and message persistence in PostgreSQL.
-   - Sidebar conversation management (create, list, select, delete) and markdown message rendering.
-   - Abortable stream generation with interrupted state persistence.
 3. **Stage 3: File Upload, Storage & Status Tracking** *(Completed)*
-   - Named Docker volume storage (`uploads:/data/uploads`) with UUID folder structure.
-   - Content-sniffing file validation (PDF, images, text, Markdown, CSV; rejected Office docs).
-   - Background ingestion with page counting (`pypdf`), dimension extraction (`Pillow`), and line counts.
-   - Automatic container reboot recovery for interrupted uploads.
-   - Frontend UX: drag-and-drop, paperclip picker, clipboard paste, real-time progress chips, and documents drawer.
 4. **Stage 4: DIRECT Mode (Grounded Multimodal Document Chat)** *(Completed)*
-   - Direct multimodal QA with Gemini vision and PDF understanding.
-   - Gemini Files API caching, polling, and transparent auto-reupload on expiration.
-   - Grounded prompt with machine-parseable citation markers (`[[cite: file \| p.X]]`).
-   - Pure-function citation parser with validation, out-of-bounds page dropping, and duplicate disambiguation.
-   - Interactive UI citation chips with PDF `#page=N` deep-linking and image lightbox modal.
-   - Document attachment selection toggles, "Direct"/"RAG" mode badges, and per-message token usage.
 5. **Stage 5: Document Parsing with Docling** *(Completed)*
-   - Containerized Docling service (`docling-serve-cpu`) with persistent model cache volume (`docling_cache`).
-   - Replaceable `DocumentParser` interface with memory-bounded page batching and progress callbacks.
-   - Alembic migration `004` adding parsing fields and `document_pages` table with exact 1-based page indices.
-   - Disk artifact storage (`parsed/docling.json` & `parsed/full.md`) with cascading cleanup.
-   - Quality heuristics (`low_text`, `garbled`, page count mismatch validation).
-   - REST API endpoints for parse status, retry, paginated pages, page detail, and markdown downloads.
-   - Interactive split-screen "Parsed view" modal comparing original PDF page against parsed Markdown.
-   - Concurrency limits, startup crash recovery, and resilience when Docling is offline.
-6. **Stage 6: Chunking, Embeddings & Vector Storage**
+6. **Stage 6: Chunking, Embeddings, Vector Storage & Hybrid Search** *(Completed)*
+   - Structure-aware deterministic chunker with table row-splits and repeated headers (`services/chunking.py`).
+   - Gemini embedding client with batching, retries, and concurrency control (`services/embeddings.py`).
+   - Alembic migration `005` adding `chunks` table with pgvector HNSW index and FTS GIN index.
+   - Search service supporting vector cosine, Postgres FTS, and Reciprocal Rank Fusion (`services/search.py`).
+   - REST endpoints for index status, manual re-index, chunk browser, chunk neighbors, and search debug.
+   - Interactive React UI: Chunks inspector modal, Search Debug studio with 3-way side-by-side comparison.
+   - Mini evaluation harness (`eval/questions.yaml` & `python -m app.eval.run_retrieval`).
+   - 14 automated acceptance tests verifying all Stage 6 requirements.
 7. **Stage 7: Hybrid Retrieval & RAG Pipeline**
 8. **Stage 8: Evaluation & Observability**
 9. **Stage 9: Production Polish & Security**
+
 
